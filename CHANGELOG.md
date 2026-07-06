@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3 - 2026-07-06
+
+- Publish Home Assistant MQTT discovery automatically after creating a camera so its trigger button appears without manually republishing discovery.
+- Republish camera trigger discovery after camera updates and clear the old retained trigger when the camera slug changes.
+- Clear retained MQTT trigger discovery when a camera is deleted.
+
 ## 1.0.2 - 2026-07-06
 
 - Use `buffalo_s` as the default InsightFace model for lower startup and CPU cost.

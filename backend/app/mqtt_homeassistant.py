@@ -217,6 +217,15 @@ def discovery_messages(config: MqttConfig, state: dict[str, Any], cameras: list[
     return messages
 
 
+def camera_trigger_discovery_clear_message(config: MqttConfig, trigger_slug: str) -> tuple[str, str, bool] | None:
+    slug = trigger_slug.strip()
+    if not slug:
+        return None
+    prefix = config.discovery_prefix.strip().strip("/") or "homeassistant"
+    object_id = f"trigger_{slug.replace('-', '_')}"
+    return (f"{prefix}/button/{config.device_id}/{object_id}/config", "", True)
+
+
 def start_command_listener(config: MqttConfig, on_camera_trigger: Any) -> mqtt.Client:
     base = config.base_topic.strip().strip("/") or "iris"
     command_topic = f"{base}/camera/+/trigger/set"

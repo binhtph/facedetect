@@ -465,6 +465,33 @@ def mqtt_discovery_messages(config: mqtt_homeassistant.MqttConfig) -> list[tuple
     )
 
 
+def publish_mqtt_discovery_if_configured(reason: str, clear_trigger_slugs: list[str] | None = None) -> None:
+    config = mqtt_config()
+    if not config.configured:
+        return
+    try:
+        messages = mqtt_discovery_messages(config)
+        for trigger_slug in clear_trigger_slugs or []:
+            clear_message = mqtt_homeassistant.camera_trigger_discovery_clear_message(config, trigger_slug)
+            if clear_message:
+                messages.append(clear_message)
+        mqtt_homeassistant.publish_many(config, messages)
+    except mqtt_homeassistant.MqttError as error:
+        with connect() as conn:
+            add_log(conn, "System", "error", f"MQTT discovery failed after {reason}: {error}")
+    else:
+        with connect() as conn:
+            add_log(conn, "System", "info", f"Published Home Assistant discovery after {reason}")
+
+
+def publish_mqtt_discovery_async(reason: str, clear_trigger_slugs: list[str] | None = None) -> None:
+    threading.Thread(
+        target=publish_mqtt_discovery_if_configured,
+        args=(reason, clear_trigger_slugs),
+        daemon=True,
+    ).start()
+
+
 def restart_mqtt_command_listener() -> None:
     global mqtt_command_client
     with mqtt_command_lock:
@@ -1719,7 +1746,9 @@ def create_camera(payload: CameraIn) -> dict:
         )
         row = row_to_dict(conn.execute("SELECT * FROM cameras WHERE id = ?", (camera_id,)).fetchone())
         add_log(conn, "System", "info", f"Created camera {name} with trigger {trigger_slug}")
-    return serialize_camera(row or {})
+    camera = serialize_camera(row or {})
+    publish_mqtt_discovery_async(f"creating camera {name}")
+    return camera
 
 
 def request_camera_trigger(trigger_slug: str, source: str = "API") -> dict:
@@ -1808,6 +1837,9 @@ def update_camera(camera_id: str, payload: CameraIn) -> dict:
     if not still_url:
         raise HTTPException(status_code=400, detail="Still image URL is required.")
     with connect() as conn:
+        previous = row_to_dict(conn.execute("SELECT * FROM cameras WHERE id = ?", (camera_id,)).fetchone())
+        if previous is None:
+            raise HTTPException(status_code=404, detail="Camera not found.")
         ensure_unique_camera_name(conn, name, camera_id)
         trigger_slug = unique_camera_slug(conn, name, camera_id)
         conn.execute(
@@ -1822,14 +1854,23 @@ def update_camera(camera_id: str, payload: CameraIn) -> dict:
         if row is None:
             raise HTTPException(status_code=404, detail="Camera not found.")
         add_log(conn, "System", "info", f"Updated camera {name}")
-    return serialize_camera(row)
+    camera = serialize_camera(row)
+    old_slug = (previous.get("trigger_slug") or "").strip()
+    clear_slugs = [old_slug] if old_slug and old_slug != camera["trigger_slug"] else None
+    publish_mqtt_discovery_async(f"updating camera {name}", clear_slugs)
+    return camera
 
 
 @app.delete("/api/cameras/{camera_id}")
 def delete_camera(camera_id: str) -> dict:
     with connect() as conn:
+        row = row_to_dict(conn.execute("SELECT * FROM cameras WHERE id = ?", (camera_id,)).fetchone())
+        if row is None:
+            raise HTTPException(status_code=404, detail="Camera not found.")
         conn.execute("DELETE FROM cameras WHERE id = ?", (camera_id,))
         add_log(conn, "System", "warn", f"Deleted camera {camera_id}")
+    trigger_slug = (row.get("trigger_slug") or "").strip()
+    publish_mqtt_discovery_async(f"deleting camera {camera_id}", [trigger_slug] if trigger_slug else None)
     return {"ok": True}
 
 
