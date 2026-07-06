@@ -1,0 +1,11 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/anhnvme/facedetect:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./backend/data:/data
