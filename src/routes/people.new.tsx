@@ -92,8 +92,8 @@ function AddPerson() {
         </div>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Add new person</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Upload 5–10 clear face photos. We index them with InsightFace and store the resulting
-          Face IDs.
+          Upload 5–10 clear face photos. We index them with InsightFace and store the resulting Face
+          IDs.
         </p>
       </div>
 

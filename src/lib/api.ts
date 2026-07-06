@@ -69,10 +69,17 @@ export const api = {
     request<ModelDownloadStatus>(`/api/settings/insightface/models/${modelName}`, {
       method: "DELETE",
     }),
-  saveInsightFace: (payload: { model_name: string; provider: string; det_size: number; age_gender_enabled: boolean }) =>
-    request<Settings | ModelRebuildStatus>("/api/settings/insightface", { method: "PUT", body: JSON.stringify(payload) }),
-  insightFaceRebuild: () =>
-    request<ModelRebuildStatus>("/api/settings/insightface/rebuild"),
+  saveInsightFace: (payload: {
+    model_name: string;
+    provider: string;
+    det_size: number;
+    age_gender_enabled: boolean;
+  }) =>
+    request<Settings | ModelRebuildStatus>("/api/settings/insightface", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  insightFaceRebuild: () => request<ModelRebuildStatus>("/api/settings/insightface/rebuild"),
   testInsightFace: () =>
     request<{ ok: boolean }>("/api/settings/insightface/test", {
       method: "POST",
@@ -113,8 +120,7 @@ export const api = {
     }),
   cleanupStorage: () =>
     request<StorageSettings>("/api/settings/storage/cleanup", { method: "POST" }),
-  clearAllData: () =>
-    request<{ ok: boolean }>("/api/settings/data/clear", { method: "POST" }),
+  clearAllData: () => request<{ ok: boolean }>("/api/settings/data/clear", { method: "POST" }),
   summary: () =>
     request<{
       people: number;

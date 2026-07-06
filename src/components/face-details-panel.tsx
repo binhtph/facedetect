@@ -38,7 +38,11 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 
 export function FaceDetailsPanel({ details }: FaceDetailsPanelProps) {
   if (!details || Object.keys(details).length === 0) {
-    return <div className="rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">Analyzing face…</div>;
+    return (
+      <div className="rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">
+        Analyzing face…
+      </div>
+    );
   }
 
   const box = details.bounding_box;

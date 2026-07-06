@@ -53,7 +53,7 @@ function SettingsPage() {
   const { data: rebuildStatus } = useQuery({
     queryKey: ["insightface-rebuild"],
     queryFn: api.insightFaceRebuild,
-    refetchInterval: (query) => query.state.data?.status === "running" ? 500 : false,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 500 : false),
   });
   const { data: mqttSettings } = useQuery({ queryKey: ["mqtt-settings"], queryFn: api.mqtt });
   const { data: telegramSettings } = useQuery({
@@ -318,7 +318,9 @@ function SettingsPage() {
                   Models and embeddings are stored locally. No cloud credentials are required.
                 </p>
               </div>
-              <Badge variant="outline" className="border-success/40 text-success">Local</Badge>
+              <Badge variant="outline" className="border-success/40 text-success">
+                Local
+              </Badge>
             </div>
 
             <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -326,26 +328,39 @@ function SettingsPage() {
                 <Label className="text-xs">Model pack</Label>
                 <div className="mt-1 flex gap-2">
                   <Select value={modelName} onValueChange={setModelName}>
-                    <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="flex-1">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="antelopev2">
-                        <span className="flex items-center gap-2">antelopev2 (high accuracy · 361 MB)
-                          {models.find((model) => model.model_name === "antelopev2")?.downloaded && <CheckCircle2 className="h-4 w-4 text-success" />}
+                        <span className="flex items-center gap-2">
+                          antelopev2 (high accuracy · 361 MB)
+                          {models.find((model) => model.model_name === "antelopev2")
+                            ?.downloaded && <CheckCircle2 className="h-4 w-4 text-success" />}
                         </span>
                       </SelectItem>
                       <SelectItem value="buffalo_l">
-                        <span className="flex items-center gap-2">buffalo_l (accurate · 289 MB)
-                          {models.find((model) => model.model_name === "buffalo_l")?.downloaded && <CheckCircle2 className="h-4 w-4 text-success" />}
+                        <span className="flex items-center gap-2">
+                          buffalo_l (accurate · 289 MB)
+                          {models.find((model) => model.model_name === "buffalo_l")?.downloaded && (
+                            <CheckCircle2 className="h-4 w-4 text-success" />
+                          )}
                         </span>
                       </SelectItem>
                       <SelectItem value="buffalo_m">
-                        <span className="flex items-center gap-2">buffalo_m (balanced · 276 MB)
-                          {models.find((model) => model.model_name === "buffalo_m")?.downloaded && <CheckCircle2 className="h-4 w-4 text-success" />}
+                        <span className="flex items-center gap-2">
+                          buffalo_m (balanced · 276 MB)
+                          {models.find((model) => model.model_name === "buffalo_m")?.downloaded && (
+                            <CheckCircle2 className="h-4 w-4 text-success" />
+                          )}
                         </span>
                       </SelectItem>
                       <SelectItem value="buffalo_s">
-                        <span className="flex items-center gap-2">buffalo_s (lightweight · 128 MB)
-                          {models.find((model) => model.model_name === "buffalo_s")?.downloaded && <CheckCircle2 className="h-4 w-4 text-success" />}
+                        <span className="flex items-center gap-2">
+                          buffalo_s (lightweight · 128 MB)
+                          {models.find((model) => model.model_name === "buffalo_s")?.downloaded && (
+                            <CheckCircle2 className="h-4 w-4 text-success" />
+                          )}
                         </span>
                       </SelectItem>
                     </SelectContent>
@@ -358,33 +373,51 @@ function SettingsPage() {
                     aria-label={selectedModel?.downloaded ? "Delete model" : "Download model"}
                     onClick={() => {
                       if (selectedModel?.downloaded) {
-                        if (window.confirm(`Delete ${modelName} to free disk space?`)) deleteModel.mutate(modelName);
+                        if (window.confirm(`Delete ${modelName} to free disk space?`))
+                          deleteModel.mutate(modelName);
                       } else {
                         downloadModel.mutate(modelName);
                       }
                     }}
                     disabled={selectedModel?.status === "downloading" || deleteModel.isPending}
                   >
-                    {selectedModel?.status === "downloading" || deleteModel.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : selectedModel?.downloaded ? <Trash2 className="h-4 w-4 text-destructive" /> : <Download className="h-4 w-4" />}
+                    {selectedModel?.status === "downloading" || deleteModel.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : selectedModel?.downloaded ? (
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
                   </Button>
                 </div>
                 {selectedModel?.status === "downloading" && (
                   <div className="mt-2 space-y-1">
                     <div className="h-2 overflow-hidden rounded-full bg-muted">
-                      <div className="h-full bg-primary transition-all" style={{ width: `${selectedModel.progress}%` }} />
+                      <div
+                        className="h-full bg-primary transition-all"
+                        style={{ width: `${selectedModel.progress}%` }}
+                      />
                     </div>
-                    <p className="text-right text-xs text-muted-foreground">{selectedModel.progress}%</p>
+                    <p className="text-right text-xs text-muted-foreground">
+                      {selectedModel.progress}%
+                    </p>
                   </div>
                 )}
-                {selectedModel?.status === "error" && <p className="mt-2 text-xs text-destructive">{selectedModel.error}</p>}
+                {selectedModel?.status === "error" && (
+                  <p className="mt-2 text-xs text-destructive">{selectedModel.error}</p>
+                )}
               </div>
               <div>
                 <Label className="text-xs">Execution provider</Label>
                 <Select value={provider} onValueChange={setProvider}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="CPUExecutionProvider">Generic CPU (ONNX Runtime)</SelectItem>
-                    <SelectItem value="OpenVINOCPU">Intel CPU (OpenVINO + oneDNN vector)</SelectItem>
+                    <SelectItem value="OpenVINOCPU">
+                      Intel CPU (OpenVINO + oneDNN vector)
+                    </SelectItem>
                     <SelectItem value="OpenVINOAUTO">Intel Auto (CPU/iGPU/NPU)</SelectItem>
                     <SelectItem value="OpenVINOGPU">Intel iGPU / Arc GPU</SelectItem>
                     <SelectItem value="OpenVINONPU">Intel NPU</SelectItem>
@@ -394,8 +427,13 @@ function SettingsPage() {
               </div>
               <div>
                 <Label className="text-xs">Detection size</Label>
-                <Select value={String(detSize)} onValueChange={(value) => setDetSize(Number(value))}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <Select
+                  value={String(detSize)}
+                  onValueChange={(value) => setDetSize(Number(value))}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="320">320 × 320 (fast)</SelectItem>
                     <SelectItem value="640">640 × 640 (balanced)</SelectItem>
@@ -408,28 +446,50 @@ function SettingsPage() {
             <div className="mt-5 flex items-center justify-between gap-4 rounded-md border border-border p-4">
               <div>
                 <Label htmlFor="age-gender">Estimate age and gender</Label>
-                <p className="text-xs text-muted-foreground">Loads the additional genderage model. Keep disabled for lowest latency.</p>
+                <p className="text-xs text-muted-foreground">
+                  Loads the additional genderage model. Keep disabled for lowest latency.
+                </p>
               </div>
-              <Switch id="age-gender" checked={ageGenderEnabled} onCheckedChange={setAgeGenderEnabled} />
+              <Switch
+                id="age-gender"
+                checked={ageGenderEnabled}
+                onCheckedChange={setAgeGenderEnabled}
+              />
             </div>
 
-            <Button className="mt-5" onClick={() => saveInsightFace.mutate()} disabled={saveInsightFace.isPending || rebuildStatus?.status === "running"}>
-              {saveInsightFace.isPending || rebuildStatus?.status === "running" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              {rebuildStatus?.status === "running" ? "Rebuilding embeddings..." : saveInsightFace.isPending ? "Saving..." : "Save InsightFace settings"}
+            <Button
+              className="mt-5"
+              onClick={() => saveInsightFace.mutate()}
+              disabled={saveInsightFace.isPending || rebuildStatus?.status === "running"}
+            >
+              {saveInsightFace.isPending || rebuildStatus?.status === "running" ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
+              {rebuildStatus?.status === "running"
+                ? "Rebuilding embeddings..."
+                : saveInsightFace.isPending
+                  ? "Saving..."
+                  : "Save InsightFace settings"}
             </Button>
             {rebuildStatus?.status === "running" && (
               <div className="mt-3 max-w-md space-y-1">
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>Rebuilding for {rebuildStatus.model_name}</span>
-                  <span>{rebuildStatus.processed}/{rebuildStatus.total} ({rebuildStatus.progress}%)</span>
+                  <span>
+                    {rebuildStatus.processed}/{rebuildStatus.total} ({rebuildStatus.progress}%)
+                  </span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full bg-primary transition-all" style={{ width: `${rebuildStatus.progress}%` }} />
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${rebuildStatus.progress}%` }}
+                  />
                 </div>
               </div>
             )}
           </Card>
-
         </TabsContent>
 
         <TabsContent value="recog" className="mt-4 space-y-6">
@@ -492,7 +552,6 @@ function SettingsPage() {
               </Button>
             </div>
           </Card>
-
         </TabsContent>
 
         <TabsContent value="storage" className="mt-4 space-y-6">
@@ -637,19 +696,26 @@ function SettingsPage() {
           <Card className="border-destructive/40 bg-card p-5">
             <h3 className="text-sm font-semibold text-destructive">Clear all data</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              Permanently deletes people, faces, events, cameras, logs, settings, uploads, and downloaded models.
+              Permanently deletes people, faces, events, cameras, logs, settings, uploads, and
+              downloaded models.
             </p>
             <Button
               variant="destructive"
               className="mt-4"
               disabled={clearAllData.isPending}
               onClick={() => {
-                if (window.confirm("Permanently delete ALL IRIS data? This action cannot be undone.")) {
+                if (
+                  window.confirm("Permanently delete ALL IRIS data? This action cannot be undone.")
+                ) {
                   clearAllData.mutate();
                 }
               }}
             >
-              {clearAllData.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              {clearAllData.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
               Clear all data
             </Button>
           </Card>

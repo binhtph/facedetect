@@ -51,7 +51,9 @@ export function AppSidebar() {
   });
   const isActive = (url: string) => (url === "/" ? pathname === "/" : pathname.startsWith(url));
   const services = data?.services;
-  const onlineCount = [services?.insightface, services?.mqtt, services?.telegram].filter(Boolean).length;
+  const onlineCount = [services?.insightface, services?.mqtt, services?.telegram].filter(
+    Boolean,
+  ).length;
   const closeMobileSidebar = () => {
     if (isMobile) setOpenMobile(false);
   };

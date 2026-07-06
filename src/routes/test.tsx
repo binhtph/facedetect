@@ -263,7 +263,9 @@ function TestPage() {
                           <Timer className="h-4 w-4 text-muted-foreground" />
                           <span className="text-muted-foreground">Recognition time</span>
                           <span className="font-mono text-xs">
-                            {result.processing_ms > 0 ? `${result.processing_ms.toFixed(0)} ms` : "-"}
+                            {result.processing_ms > 0
+                              ? `${result.processing_ms.toFixed(0)} ms`
+                              : "-"}
                           </span>
                         </div>
                       </div>
