@@ -19,6 +19,47 @@ Runtime options include:
 - Detection size: 320, 640, or 1280;
 - Age/gender estimation: disabled by default for lower latency.
 
+## Model and speed notes
+
+InsightFace model packs trade accuracy, startup time, memory use, and CPU cost:
+
+- `buffalo_s`: fastest and lightest. Recommended for CPU-only devices, mini PCs, Raspberry Pi-class hosts, or low-latency MQTT triggers.
+- `buffalo_m`: balanced option for CPU if `buffalo_s` is not accurate enough.
+- `buffalo_l`: heavier and usually more accurate, better when the host has a GPU/iGPU or a strong CPU.
+- `antelopev2`: strong accuracy-oriented pack, but not the first choice for low-power CPU-only deployments.
+
+Recommended CPU profile:
+
+- Model: start with `buffalo_s`.
+- Detection size: start with `320`; use `640` only if faces are missed.
+- Age/gender: keep disabled unless needed.
+- MQTT: the recognition result is published first; thumbnails are published afterward.
+
+Detection size guidance:
+
+- `320`: fastest. Use for close, clear, single-person camera views.
+- `640`: default balance. Use when faces are smaller or detection misses happen.
+- `1280`: slowest. Use only for distant faces, wide scenes, or crowded frames.
+
+For Intel iGPU/OpenVINO in Docker, pass the DRM device into the container:
+
+```yaml
+services:
+  iris:
+    image: ghcr.io/anhnvme/facedetect:latest
+    ports:
+      - "8080:80"
+    volumes:
+      - ./backend/data:/data
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+```
+
+Then select an OpenVINO provider in Settings, for example OpenVINO CPU/iGPU/Auto. The host must have a working Intel graphics driver and `/dev/dri` available.
+
 ## Persistent data
 
 Docker stores all persistent data under `/data`, requiring only one mounted volume:
