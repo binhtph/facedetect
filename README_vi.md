@@ -10,7 +10,7 @@ IRIS nhận diện khuôn mặt cục bộ bằng InsightFace. Ảnh, embedding,
 docker compose up -d --build
 ```
 
-Mở `http://127.0.0.1:8080`. Tải model cần dùng tại Settings → InsightFace.
+Mở `http://127.0.0.1:8080`. Model nhẹ `buffalo_s` sẽ tự tải trong lần khởi chạy đầu tiên.
 
 Các tùy chọn runtime:
 

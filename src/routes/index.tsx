@@ -145,7 +145,7 @@ function Dashboard() {
     {
       label: "Local face embeddings",
       value: String(summary?.local_inference.indexed_faces ?? 0),
-      detail: summary?.local_inference.model ?? "buffalo_l",
+      detail: summary?.local_inference.model ?? "buffalo_s",
       icon: ScanFace,
       tone: "text-success",
     },

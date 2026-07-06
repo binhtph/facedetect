@@ -10,7 +10,7 @@ IRIS performs local face recognition with InsightFace. Images, embeddings, setti
 docker compose up -d --build
 ```
 
-Open `http://127.0.0.1:8080`. Download the required model from Settings → InsightFace.
+Open `http://127.0.0.1:8080`. The lightweight `buffalo_s` model is downloaded automatically on first startup.
 
 Runtime options include:
 

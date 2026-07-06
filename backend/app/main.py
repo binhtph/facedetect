@@ -61,7 +61,7 @@ def insightface_config() -> insightface_engine.InsightFaceConfig:
     with connect() as conn:
         cfg = get_setting(conn, "insightface", {})
     return insightface_engine.InsightFaceConfig(
-        model_name=cfg.get("model_name", "buffalo_l"),
+        model_name=cfg.get("model_name", "buffalo_s"),
         provider=cfg.get("provider", "CPUExecutionProvider"),
         det_size=int(cfg.get("det_size", 640)),
         age_gender_enabled=bool(cfg.get("age_gender_enabled", False)),
@@ -129,7 +129,7 @@ def public_settings() -> dict:
         telegram = get_setting(conn, "telegram", {})
     return {
         "insightface_configured": True,
-        "model_name": cfg.get("model_name", "buffalo_l"),
+        "model_name": cfg.get("model_name", "buffalo_s"),
         "provider": cfg.get("provider", "CPUExecutionProvider"),
         "det_size": int(cfg.get("det_size", 640)),
         "age_gender_enabled": bool(cfg.get("age_gender_enabled", False)),
@@ -566,6 +566,7 @@ def rebuild_missing_embeddings() -> None:
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    insightface_engine.start_model_download("buffalo_s")
     backfill_camera_slugs()
     normalize_stored_upload_paths()
     rebuild_missing_embeddings()
@@ -764,7 +765,7 @@ def save_insightface_settings(payload: InsightFaceSettingsIn) -> dict:
         faces = rows_to_dicts(
             conn.execute("SELECT id, person_id, image_path, source_image_path FROM person_faces").fetchall()
         )
-    if previous.get("model_name", "buffalo_l") != payload.model_name:
+    if previous.get("model_name", "buffalo_s") != payload.model_name:
         with model_rebuild_lock:
             model_rebuild_status.update(
                 status="running",

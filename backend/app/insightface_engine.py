@@ -25,7 +25,7 @@ class InsightFaceError(RuntimeError):
 
 @dataclass(frozen=True)
 class InsightFaceConfig:
-    model_name: str = "buffalo_l"
+    model_name: str = "buffalo_s"
     provider: str = "CPUExecutionProvider"
     det_size: int = 640
     age_gender_enabled: bool = False
@@ -166,7 +166,7 @@ def _engine(config: InsightFaceConfig) -> FaceAnalysis:
             try:
                 if not _is_model_downloaded(config.model_name):
                     raise InsightFaceError(
-                        f"Model {config.model_name} is not downloaded. Download it in Settings first."
+                        f"Model {config.model_name} is not downloaded yet. It can be downloaded from Settings."
                     )
                 runtime_provider, provider_options = _provider_spec(config.provider)
                 if runtime_provider not in ort.get_available_providers():

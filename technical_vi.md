@@ -20,7 +20,7 @@
 6. Publish MQTT decision ngay qua kết nối thường trực.
 7. Tạo thumbnail/crop và publish ảnh MQTT trong thread nền.
 
-Ngưỡng match/auto-accept mặc định là 40/55. Cần hiệu chỉnh theo camera thực tế.
+Model mặc định là `buffalo_s` và được tự tải khi khởi động. Ngưỡng match/auto-accept mặc định là 40/55. Cần hiệu chỉnh theo camera thực tế.
 
 ## Cấu hình InsightFace
 

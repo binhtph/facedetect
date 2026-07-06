@@ -182,7 +182,7 @@ def init_db() -> None:
         )
         if get_setting(conn, "insightface") is None:
             set_setting(conn, "insightface", {
-                "model_name": "buffalo_l",
+                "model_name": "buffalo_s",
                 "provider": "CPUExecutionProvider",
                 "det_size": 640,
                 "age_gender_enabled": False,

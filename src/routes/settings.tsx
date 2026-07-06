@@ -68,7 +68,7 @@ function SettingsPage() {
     queryKey: ["logs-settings"],
     queryFn: api.logsSettings,
   });
-  const [modelName, setModelName] = useState("buffalo_l");
+  const [modelName, setModelName] = useState("buffalo_s");
   const [provider, setProvider] = useState("CPUExecutionProvider");
   const [detSize, setDetSize] = useState(640);
   const [ageGenderEnabled, setAgeGenderEnabled] = useState(false);
@@ -88,6 +88,7 @@ function SettingsPage() {
   const [maxStorageMb, setMaxStorageMb] = useState(2048);
   const [logMaxRows, setLogMaxRows] = useState(500);
   const [trackedRebuild, setTrackedRebuild] = useState(false);
+  const [pendingModelSave, setPendingModelSave] = useState<string | null>(null);
 
   useEffect(() => {
     if (!settings) return;
@@ -135,13 +136,7 @@ function SettingsPage() {
   }, [queryClient, rebuildStatus, trackedRebuild]);
 
   const saveInsightFace = useMutation({
-    mutationFn: () =>
-      api.saveInsightFace({
-        model_name: modelName,
-        provider,
-        det_size: detSize,
-        age_gender_enabled: ageGenderEnabled,
-      }),
+    mutationFn: api.saveInsightFace,
     onSuccess: (result) => {
       if ("status" in result) {
         setTrackedRebuild(true);
@@ -172,6 +167,47 @@ function SettingsPage() {
   });
 
   const selectedModel = models.find((model) => model.model_name === modelName);
+
+  const saveInsightFaceConfig = (next: {
+    model_name?: string;
+    provider?: string;
+    det_size?: number;
+    age_gender_enabled?: boolean;
+  }) => {
+    const nextModelName = next.model_name ?? modelName;
+    const model = models.find((item) => item.model_name === nextModelName);
+    if (model && !model.downloaded) {
+      setPendingModelSave(nextModelName);
+      if (model.status !== "downloading") {
+        toast.info(`Downloading ${nextModelName}`);
+        downloadModel.mutate(nextModelName);
+      }
+      return;
+    }
+    saveInsightFace.mutate({
+      model_name: nextModelName,
+      provider: next.provider ?? provider,
+      det_size: next.det_size ?? detSize,
+      age_gender_enabled: next.age_gender_enabled ?? ageGenderEnabled,
+    });
+  };
+
+  useEffect(() => {
+    if (!pendingModelSave) return;
+    const model = models.find((item) => item.model_name === pendingModelSave);
+    if (model?.downloaded) {
+      const nextModelName = pendingModelSave;
+      setPendingModelSave(null);
+      saveInsightFace.mutate({
+        model_name: nextModelName,
+        provider,
+        det_size: detSize,
+        age_gender_enabled: ageGenderEnabled,
+      });
+    } else if (model?.status === "error") {
+      setPendingModelSave(null);
+    }
+  }, [ageGenderEnabled, detSize, models, pendingModelSave, provider, saveInsightFace]);
 
   const saveThresholds = useMutation({
     mutationFn: () => api.saveThresholds({ match: match[0], auto_accept: accept[0] }),
@@ -327,7 +363,13 @@ function SettingsPage() {
               <div>
                 <Label className="text-xs">Model pack</Label>
                 <div className="mt-1 flex gap-2">
-                  <Select value={modelName} onValueChange={setModelName}>
+                  <Select
+                    value={modelName}
+                    onValueChange={(value) => {
+                      setModelName(value);
+                      saveInsightFaceConfig({ model_name: value });
+                    }}
+                  >
                     <SelectTrigger className="flex-1">
                       <SelectValue />
                     </SelectTrigger>
@@ -409,7 +451,13 @@ function SettingsPage() {
               </div>
               <div>
                 <Label className="text-xs">Execution provider</Label>
-                <Select value={provider} onValueChange={setProvider}>
+                <Select
+                  value={provider}
+                  onValueChange={(value) => {
+                    setProvider(value);
+                    saveInsightFaceConfig({ provider: value });
+                  }}
+                >
                   <SelectTrigger className="mt-1">
                     <SelectValue />
                   </SelectTrigger>
@@ -429,7 +477,11 @@ function SettingsPage() {
                 <Label className="text-xs">Detection size</Label>
                 <Select
                   value={String(detSize)}
-                  onValueChange={(value) => setDetSize(Number(value))}
+                  onValueChange={(value) => {
+                    const nextDetSize = Number(value);
+                    setDetSize(nextDetSize);
+                    saveInsightFaceConfig({ det_size: nextDetSize });
+                  }}
                 >
                   <SelectTrigger className="mt-1">
                     <SelectValue />
@@ -453,26 +505,27 @@ function SettingsPage() {
               <Switch
                 id="age-gender"
                 checked={ageGenderEnabled}
-                onCheckedChange={setAgeGenderEnabled}
+                onCheckedChange={(checked) => {
+                  setAgeGenderEnabled(checked);
+                  saveInsightFaceConfig({ age_gender_enabled: checked });
+                }}
               />
             </div>
 
-            <Button
-              className="mt-5"
-              onClick={() => saveInsightFace.mutate()}
-              disabled={saveInsightFace.isPending || rebuildStatus?.status === "running"}
-            >
-              {saveInsightFace.isPending || rebuildStatus?.status === "running" ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="mr-2 h-4 w-4" />
-              )}
-              {rebuildStatus?.status === "running"
-                ? "Rebuilding embeddings..."
-                : saveInsightFace.isPending
-                  ? "Saving..."
-                  : "Save InsightFace settings"}
-            </Button>
+            {(saveInsightFace.isPending ||
+              rebuildStatus?.status === "running" ||
+              pendingModelSave) && (
+              <div className="mt-5 flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>
+                  {pendingModelSave
+                    ? `Downloading ${pendingModelSave} before saving`
+                    : rebuildStatus?.status === "running"
+                      ? "Rebuilding embeddings..."
+                      : "Saving InsightFace settings..."}
+                </span>
+              </div>
+            )}
             {rebuildStatus?.status === "running" && (
               <div className="mt-3 max-w-md space-y-1">
                 <div className="flex justify-between text-xs text-muted-foreground">

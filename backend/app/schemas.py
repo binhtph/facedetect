@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class InsightFaceSettingsIn(BaseModel):
-    model_name: str = Field(default="buffalo_l", min_length=1)
+    model_name: str = Field(default="buffalo_s", min_length=1)
     provider: Literal[
         "CPUExecutionProvider",
         "CUDAExecutionProvider",

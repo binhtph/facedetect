@@ -20,7 +20,7 @@
 6. Publish the MQTT decision immediately through the persistent connection.
 7. Generate thumbnails/crops and publish the MQTT image in a background thread.
 
-Default match/auto-accept thresholds are 40/55. Calibrate them against the actual cameras.
+Default model is `buffalo_s` and is downloaded automatically on startup. Default match/auto-accept thresholds are 40/55. Calibrate them against the actual cameras.
 
 ## InsightFace configuration
 
