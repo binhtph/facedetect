@@ -3,7 +3,9 @@ name: Docker
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  ADDON_REPO: anhnvme/hass-facedetect-addon
+  # Home Assistant add-on repo + folder that wraps this image
+  ADDON_REPO: binhtph/ha-addons
+  ADDON_DIR: facedetect
 
 on:
   push:
@@ -69,6 +71,7 @@ jobs:
             org.opencontainers.image.description=Local InsightFace recognition with Home Assistant MQTT support
 
       - uses: docker/build-push-action@v7
+        id: build
         with:
           context: .
           file: Dockerfile
@@ -101,6 +104,10 @@ jobs:
         with:
           body_path: release-notes.md
 
+      # ---- Home Assistant add-on: pin to the released image ----
+      # On a v1.2.3 tag: set FROM ghcr.io/binhtph/facedetect:1.2.3 and
+      # version "1.2.3" in the add-on, so HA offers the update and rebuilds on
+      # exactly that image. Pushes to main only build latest/sha-* images.
       - name: Checkout Home Assistant add-on repo
         if: startsWith(github.ref, 'refs/tags/v') && env.ADDON_REPO_TOKEN != ''
         uses: actions/checkout@v5
@@ -111,25 +118,46 @@ jobs:
 
       - name: Update Home Assistant add-on version
         if: startsWith(github.ref, 'refs/tags/v') && env.ADDON_REPO_TOKEN != ''
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          image="${REGISTRY}/${IMAGE_NAME}:${version}"
-          export version image
+          set -euo pipefail
 
-          perl -0pi -e 's/version: "[^"]+"/version: "$ENV{version}"/' addon/iris_face_recognition/config.yaml
-          perl -0pi -e 's#FROM ghcr\.io/anhnvme/facedetect:\S+#FROM $ENV{image}#' addon/iris_face_recognition/Dockerfile
-          perl -0pi -e 's#ghcr\.io/anhnvme/facedetect:[^`\s]+#$ENV{image}#g' addon/README.md addon/iris_face_recognition/README.md
+          version="${GITHUB_REF_NAME#v}"
+          image="${REGISTRY}/${IMAGE_NAME}"
+          dir="addon/${ADDON_DIR}"
+
+          sed -i -E "s/^version:.*/version: \"${version}\"/" "${dir}/config.yaml"
+          sed -i -E "s#^FROM ${image}:[^[:space:]]+#FROM ${image}:${version}#" "${dir}/Dockerfile"
+          sed -i -E "s#${image}:[^\`[:space:]]+#${image}:${version}#g" "${dir}/README.md"
 
           if git -C addon diff --quiet; then
-            echo "Add-on repo already points to ${version}."
+            echo "Add-on already uses ${image}:${version}; nothing to do."
             exit 0
+          fi
+
+          changelog="${dir}/CHANGELOG.md"
+          if [[ -f "$changelog" ]] && head -n1 "$changelog" | grep -q '^# '; then
+            ENTRY="$(printf '## %s - %s\n\n- Image `%s:%s`, digest `%s`\n- Source: %s@%s\n' \
+              "$version" "$(date -u +%F)" "$image" "$version" "$DIGEST" "$GITHUB_REPOSITORY" "${GITHUB_SHA::7}")" \
+              awk 'NR==1 { print; print ""; print ENVIRON["ENTRY"]; next } { print }' "$changelog" > "$changelog.new"
+            mv "$changelog.new" "$changelog"
           fi
 
           git -C addon config user.name "github-actions[bot]"
           git -C addon config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C addon add iris_face_recognition/config.yaml iris_face_recognition/Dockerfile README.md iris_face_recognition/README.md
-          git -C addon commit -m "Release add-on ${version}"
-          git -C addon push
+          git -C addon add "${ADDON_DIR}"
+          git -C addon commit \
+            -m "${ADDON_DIR}: ${version}" \
+            -m "Image ${image}:${version} @ ${DIGEST}" \
+            -m "Source ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+
+          for attempt in 1 2 3; do
+            git -C addon push && exit 0
+            echo "Push rejected (attempt ${attempt}); rebasing on latest ${ADDON_REPO}..."
+            git -C addon pull --rebase
+          done
+          exit 1
 
       - name: Skip Home Assistant add-on update
         if: startsWith(github.ref, 'refs/tags/v') && env.ADDON_REPO_TOKEN == ''
