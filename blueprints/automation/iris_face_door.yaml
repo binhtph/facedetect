@@ -1,5 +1,5 @@
 blueprint:
-  name: "IRIS – Cửa chính: mở cửa bằng khuôn mặt & chào khi cửa mở"
+  name: "IRIS – Cửa chính: mở cửa bằng khuôn mặt & chào khi cửa mở (binhtph)"
   author: binhtph
   source_url: https://github.com/binhtph/facedetect/blob/main/blueprints/automation/iris_face_door.yaml
   domain: automation
