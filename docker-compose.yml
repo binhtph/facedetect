@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/anhnvme/facedetect:latest
+    image: ghcr.io/binhtph/facedetect:latest
     restart: unless-stopped
     ports:
       - "8080:80"

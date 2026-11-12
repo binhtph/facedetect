@@ -4,6 +4,22 @@
 
 IRIS nhận diện khuôn mặt cục bộ bằng InsightFace. Ảnh, embedding, cấu hình và log đều nằm trên máy chạy ứng dụng; không cần tài khoản cloud.
 
+## Phiên bản và kho mã
+
+Phiên bản hiện tại: **2.0.0** (image `ghcr.io/binhtph/facedetect:2.0.0`). Xem [CHANGELOG.md](CHANGELOG.md).
+
+| Cách chạy             | Kho mã                                                                          |
+| --------------------- | ------------------------------------------------------------------------------- |
+| Docker độc lập        | [binhtph/facedetect](https://github.com/binhtph/facedetect) (repo này)          |
+| Home Assistant add-on | [binhtph/ha-addons](https://github.com/binhtph/ha-addons), thư mục `facedetect` |
+
+Dự án phát triển tiếp từ bản Release 1.0 của tác giả gốc:
+
+- [anhnvme/facedetect](https://github.com/anhnvme/facedetect): chạy Docker độc lập.
+- [anhnvme/hass-facedetect-addon](https://github.com/anhnvme/hass-facedetect-addon): add-on cho Home Assistant.
+
+Theo tác giả gốc, đây là ứng dụng nhận diện khuôn mặt ở mức cơ bản và đã được triển khai cho nhiều nhà bạn bè hơn 1 năm.
+
 ## Chạy bằng Docker Compose
 
 ```bash
@@ -46,7 +62,7 @@ Gợi ý chọn Detection size:
 ```yaml
 services:
   iris:
-    image: ghcr.io/anhnvme/facedetect:latest
+    image: ghcr.io/binhtph/facedetect:latest
     ports:
       - "8080:80"
     volumes:
@@ -59,6 +75,79 @@ services:
 ```
 
 Sau đó chọn provider OpenVINO trong Settings, ví dụ OpenVINO CPU/iGPU/Auto. Máy host cần có Intel graphics driver hoạt động và có `/dev/dri`.
+
+## Cấu hình MQTT và model
+
+Cấu hình MQTT và model tùy theo máy và cách dùng:
+
+- **Model:** chọn theo phần [Ghi chú model và tốc độ](#ghi-chú-model-và-tốc-độ) ở trên. Máy yếu bắt đầu với `buffalo_s`.
+- **MQTT:** điền broker trong **Settings → MQTT**. IRIS giữ một kết nối thường trực, tự kết nối lại và tự gửi lại Home Assistant discovery sau khi IRIS, broker hoặc Home Assistant khởi động lại. Trang **MQTT Monitor** hiển thị trạng thái kết nối và các tin đã gửi/nhận.
+- **Nhiều người trong một khung hình:** chỉnh **Settings → Faces per image** (mặc định 1 = chỉ mặt lớn nhất).
+
+Mỗi lần nhận diện, IRIS gửi một tin lên `iris/event` (mỗi khuôn mặt một tin) và cập nhật các sensor như `Latest Person`, `Latest Recognition Event`. Khi IRIS mất kết nối, thiết bị trong Home Assistant chuyển sang _Unavailable_.
+
+Ví dụ automation báo khi nhận ra người quen:
+
+```yaml
+automation:
+  - alias: IRIS - báo người quen
+    triggers:
+      - trigger: mqtt
+        topic: iris/event
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.payload_json.latest_type == 'known' }}"
+    actions:
+      - action: notify.notify
+        data:
+          message: "{{ trigger.payload_json.latest_person }} vừa tới {{ trigger.payload_json.latest_camera }}"
+```
+
+## Thêm camera bằng go2rtc
+
+IRIS không xem video liên tục. Mỗi khi có **trigger**, IRIS tải **một ảnh tĩnh** từ camera rồi nhận diện ảnh đó. Cách đơn giản nhất để có ảnh tĩnh từ camera RTSP là dùng [go2rtc](https://github.com/AlexxIT/go2rtc):
+
+1. Thêm camera vào go2rtc, ví dụ trong `go2rtc.yaml`:
+
+   ```yaml
+   streams:
+     cong_truoc: rtsp://user:pass@192.168.1.50:554/stream1
+   ```
+
+2. Link ảnh tĩnh của camera có dạng:
+
+   ```text
+   http://<máy-go2rtc>:1984/api/frame.jpeg?src=<tên_camera>
+   ```
+
+   Ví dụ: `http://192.168.1.10:1984/api/frame.jpeg?src=cong_truoc`. Mở thử link trên trình duyệt, phải thấy ảnh JPEG.
+
+3. Trong IRIS vào **Cameras → Add camera**, dán link vào **Still image URL**. Chỉnh **Cooldown** để tránh nhận diện lặp lại liên tục.
+
+4. Kích hoạt nhận diện bằng một trong hai cách:
+   - **Nút MQTT** `Trigger <tên camera>` mà IRIS tạo sẵn trong Home Assistant (tên entity lấy theo tên camera trong IRIS), ví dụ trong automation khi có chuyển động hoặc bấm chuông:
+
+     ```yaml
+     actions:
+       - action: button.press
+         target:
+           entity_id: button.iris_face_recognition_trigger_cong_truoc
+     ```
+
+   - **HTTP:** `GET` hoặc `POST` tới `http://<máy-IRIS>:8080/api/cameras/trigger/<slug>` (link đầy đủ có trong trang camera).
+
+## Khuyến nghị quan trọng
+
+- Nên dùng ở khu vực **có thêm các lớp an ninh vật lý khác**; không dùng IRIS làm điều kiện duy nhất để mở cửa hay tắt báo động.
+- **Test kỹ trước khi đưa vào thực tế**, với đúng camera, góc đặt và ánh sáng ngày/đêm.
+- **Không train nhồi nhét quá nhiều ảnh cho một người**, nhất là ảnh mờ hoặc góc xấu: dễ làm tăng tỷ lệ nhận nhầm (false match).
+
+## Những vấn đề đã biết
+
+- **Tỷ lệ % hiển thị thường không cao**, nhưng theo kinh nghiệm của tác giả gốc rất ít khi nhận nhầm. Con số này là độ tương đồng (cosine similarity × 100), không phải xác suất đúng; ngưỡng mặc định là match 40 / auto-accept 55.
+- **Chưa có kiểm tra người thật (liveness/anti-spoofing):** ảnh in hoặc ảnh trên màn hình điện thoại đưa trước camera có thể được nhận là người thật. Đây là lý do cần kết hợp an ninh vật lý.
+- Các ô **Min face** và **Min confidence** của camera hiện chỉ được lưu, **chưa được áp dụng** khi nhận diện.
+- Bản add-on: cổng `8080` không có đăng nhập; nên truy cập qua sidebar Home Assistant.
 
 ## Dữ liệu bền vững
 
@@ -79,10 +168,10 @@ Chạy local mặc định dùng `backend/data/`. Có thể đổi data root b�
 docker run -d --name iris \
   -p 8080:80 \
   -v "${PWD}/backend/data:/data" \
-  ghcr.io/anhnvme/facedetect:latest
+  ghcr.io/binhtph/facedetect:2.0.0
 ```
 
-Khi push Git tag `v1.2.3`, image cũng được phát hành với các tag `1.2.3`, `1.2` và `1`.
+Khi push Git tag `v2.0.0`, image được phát hành với các tag `2.0.0`, `2.0`, `2` và `latest`. Push lên `main` chỉ cập nhật `latest`, `main` và `sha-<commit>`.
 
 ## Phần mềm bên thứ ba và giấy phép model
 

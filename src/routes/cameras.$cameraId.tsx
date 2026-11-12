@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { appPath, clientBasepath } from "@/lib/basepath";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -68,7 +69,7 @@ function CameraDetail() {
     mutationFn: () => api.deleteCamera(cameraId),
     onSuccess: () => {
       toast.success("Camera removed");
-      window.location.href = "/cameras";
+      window.location.href = appPath("/cameras");
     },
     onError: (err) => toast.error(err.message),
   });
@@ -94,7 +95,12 @@ function CameraDetail() {
     );
   }
 
-  const triggerUrl = `${API_BASE}${camera.trigger_path}`;
+  // Inside the Home Assistant sidebar the page URL carries a session-bound ingress token
+  // that automations cannot use, so show the add-on's direct port instead.
+  const underIngress = clientBasepath() !== "";
+  const triggerUrl = underIngress
+    ? `http://${window.location.hostname}:8080${camera.trigger_path}`
+    : `${API_BASE}${camera.trigger_path}`;
 
   return (
     <PageShell>
@@ -229,6 +235,12 @@ function CameraDetail() {
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
+              {underIngress && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Direct add-on port (needs port 8080 enabled). From Home Assistant automations the
+                  simplest option is the MQTT button “Trigger {camera.name}”.
+                </p>
+              )}
             </div>
           </div>
         </Card>

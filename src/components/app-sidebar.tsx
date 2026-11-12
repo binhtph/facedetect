@@ -10,6 +10,8 @@ import {
   Settings,
   ScrollText,
   FlaskConical,
+  BarChart3,
+  RadioTower,
 } from "lucide-react";
 
 import {
@@ -32,6 +34,7 @@ const mainItems = [
   { title: "People", url: "/people", icon: Users },
   { title: "Events", url: "/events", icon: CalendarClock },
   { title: "Unknown Visitors", url: "/unknown", icon: UserX },
+  { title: "Analytics", url: "/analytics", icon: BarChart3 },
   { title: "Cameras", url: "/cameras", icon: Camera },
   { title: "Test", url: "/test", icon: FlaskConical },
 ];
@@ -39,6 +42,7 @@ const mainItems = [
 const systemItems = [
   { title: "Settings", url: "/settings", icon: Settings },
   { title: "System Logs", url: "/logs", icon: ScrollText },
+  { title: "MQTT Monitor", url: "/mqtt", icon: RadioTower },
 ];
 
 export function AppSidebar() {

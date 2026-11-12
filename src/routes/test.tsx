@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
@@ -62,13 +62,18 @@ function TestPage() {
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<EventItem | null>(null);
+  const [otherFaces, setOtherFaces] = useState<EventItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
 
   const recognize = useMutation({
     mutationFn: (file: File) => api.recognize(file, "Test upload", "", false),
     onSuccess: (event) => {
       setResult(event);
-      toast.success("Recognition complete");
+      setOtherFaces(event.additional_events ?? []);
+      const faceCount = 1 + (event.additional_events?.length ?? 0);
+      toast.success(
+        faceCount > 1 ? `Recognition complete: ${faceCount} faces` : "Recognition complete",
+      );
       queryClient.invalidateQueries({ queryKey: ["events"] });
       queryClient.invalidateQueries({ queryKey: ["summary"] });
       queryClient.invalidateQueries({ queryKey: ["unknowns"] });
@@ -101,6 +106,7 @@ function TestPage() {
         return;
       }
       setResult(null);
+      setOtherFaces([]);
       setPreview(URL.createObjectURL(file));
       recognize.mutate(file);
     },
@@ -288,12 +294,47 @@ function TestPage() {
                 );
               })()}
 
+              {otherFaces.length > 0 && (
+                <Card className="border-border bg-card p-5">
+                  <h3 className="text-sm font-semibold">
+                    Other faces in this image ({otherFaces.length})
+                  </h3>
+                  <ul className="mt-3 divide-y divide-border">
+                    {otherFaces.map((face) => {
+                      const info = statusInfo(face.type);
+                      return (
+                        <li key={face.id} className="flex items-center justify-between gap-3 py-2">
+                          <Link
+                            to="/events/$eventId"
+                            params={{ eventId: face.id }}
+                            className="truncate text-sm font-medium hover:underline"
+                          >
+                            {face.personName || face.person_name}
+                          </Link>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {face.confidence > 0 && (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {face.confidence.toFixed(1)}%
+                              </span>
+                            )}
+                            <Badge variant="outline" className={info.cls}>
+                              {info.label}
+                            </Badge>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </Card>
+              )}
+
               <Button
                 variant="outline"
                 className="w-full"
                 onClick={() => {
                   setPreview(null);
                   setResult(null);
+                  setOtherFaces([]);
                 }}
               >
                 <Upload className="mr-2 h-4 w-4" /> Test another image

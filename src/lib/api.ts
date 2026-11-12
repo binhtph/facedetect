@@ -1,5 +1,8 @@
 import { request } from "@/lib/http";
 import type {
+  AnalyticsData,
+  MqttMessage,
+  MqttStatus,
   Camera,
   DashboardData,
   EventItem,
@@ -20,6 +23,9 @@ import type {
 export { API_BASE, apiUrl, request } from "@/lib/http";
 export { cameraSnapshotUrl, uploadUrl } from "@/lib/uploads";
 export type {
+  AnalyticsData,
+  MqttMessage,
+  MqttStatus,
   Camera,
   EventItem,
   EventType,
@@ -74,6 +80,7 @@ export const api = {
     provider: string;
     det_size: number;
     age_gender_enabled: boolean;
+    max_faces: number;
   }) =>
     request<Settings | ModelRebuildStatus>("/api/settings/insightface", {
       method: "PUT",
@@ -191,13 +198,17 @@ export const api = {
     );
     return { ...result, event: normalizeEvent(result.event) };
   },
-  recognize: (file: File, cameraName = "Manual upload", cameraId = "", notify = true) => {
+  recognize: async (file: File, cameraName = "Manual upload", cameraId = "", notify = true) => {
     const body = new FormData();
     body.append("file", file);
     body.append("camera_name", cameraName);
     body.append("camera_id", cameraId);
     body.append("notify", String(notify));
-    return request<EventItem>("/api/recognize", { method: "POST", body });
+    const result = await request<EventItem>("/api/recognize", { method: "POST", body });
+    return {
+      ...normalizeEvent(result),
+      additional_events: (result.additional_events ?? []).map(normalizeEvent),
+    };
   },
   unknowns: async () => (await request<UnknownVisitor[]>("/api/unknowns")).map(normalizeUnknown),
   assignUnknown: (unknownId: string, personId: string) =>
@@ -217,6 +228,13 @@ export const api = {
     if (limit) params.set("limit", String(limit));
     return request<PaginatedLogs>(`/api/logs?${params.toString()}`);
   },
+  analytics: (days: number) =>
+    request<AnalyticsData>(
+      `/api/analytics?days=${days}&tz_offset_minutes=${-new Date().getTimezoneOffset()}`,
+    ),
+  mqttMessages: (limit = 100) =>
+    request<{ status: MqttStatus; messages: MqttMessage[] }>(`/api/mqtt/messages?limit=${limit}`),
+  clearMqttMessages: () => request<{ ok: boolean }>("/api/mqtt/messages", { method: "DELETE" }),
   logsSettings: () => request<LogsSettings>("/api/settings/logs"),
   saveLogsSettings: (payload: { max_rows: number }) =>
     request<LogsSettings>("/api/settings/logs", { method: "PUT", body: JSON.stringify(payload) }),

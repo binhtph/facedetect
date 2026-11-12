@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.0 - 2026-11-12
+
+- **Home Assistant sidebar (ingress):** the UI, API calls, uploads and router now work under `/api/hassio_ingress/<token>/` as well as on the direct port. SSR links get the ingress prefix from `X-Ingress-Path`; nginx rewrites asset URLs in HTML; chunk preloads follow the page's base path.
+- **MQTT rewrite:** one persistent connection (`<device_id>_iris`) for publishing and camera commands instead of a new connection per message, which made brokers drop messages when several publishes shared the same client id. Adds Last Will (`availability` = `offline`), automatic reconnect, QoS 1 events that are delivered after a short outage, and automatic republish of discovery/state/latest image after every reconnect and when Home Assistant restarts (`homeassistant/status`). Saving MQTT settings is no longer needed to bring entities back. Errors are logged instead of silently ignored.
+- **Multiple faces per image:** new setting _Faces per image_ (default 1 = old behaviour). Each face becomes its own event, unknown visitor, Telegram alert and `iris/event` message; the test page lists the other faces. Small or low-confidence background faces are skipped.
+- Training a person from an event (or assigning an unknown visitor) now indexes that event's face even in group photos, and embedding rebuilds after a model change use the face crop first.
+- **Analytics page:** events per day by result, busiest hours, cameras and most seen people (`GET /api/analytics`).
+- **MQTT Monitor page:** connection status and a live log of sent/received MQTT messages (`GET/DELETE /api/mqtt/messages`, `GET /api/mqtt/status`).
+- Camera page opened from the Home Assistant sidebar shows a usable trigger URL (direct port) instead of the session-bound ingress address.
+- Docs: version 2.0.0 and `ghcr.io/binhtph/facedetect` images; links to the standalone and add-on repositories (and the original Release 1.0 by anhnvme); MQTT/model setup with an automation example; adding cameras with go2rtc still images (`/api/frame.jpeg?src=<camera>`); important recommendations and known issues (including the missing liveness/anti-spoofing check and the unused camera Min face / Min confidence fields).
+
 ## 1.0.3 - 2026-07-06
 
 - Publish Home Assistant MQTT discovery automatically after creating a camera so its trigger button appears without manually republishing discovery.

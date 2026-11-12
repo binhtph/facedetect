@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as UnknownRouteImport } from './routes/unknown'
 import { Route as TestRouteImport } from './routes/test'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as MqttRouteImport } from './routes/mqtt'
 import { Route as LogsRouteImport } from './routes/logs'
+import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PeopleIndexRouteImport } from './routes/people.index'
 import { Route as EventsIndexRouteImport } from './routes/events.index'
@@ -37,9 +39,19 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MqttRoute = MqttRouteImport.update({
+  id: '/mqtt',
+  path: '/mqtt',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LogsRoute = LogsRouteImport.update({
   id: '/logs',
   path: '/logs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AnalyticsRoute = AnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -85,7 +97,9 @@ const CamerasCameraIdRoute = CamerasCameraIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/logs': typeof LogsRoute
+  '/mqtt': typeof MqttRoute
   '/settings': typeof SettingsRoute
   '/test': typeof TestRoute
   '/unknown': typeof UnknownRoute
@@ -99,7 +113,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/logs': typeof LogsRoute
+  '/mqtt': typeof MqttRoute
   '/settings': typeof SettingsRoute
   '/test': typeof TestRoute
   '/unknown': typeof UnknownRoute
@@ -114,7 +130,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/logs': typeof LogsRoute
+  '/mqtt': typeof MqttRoute
   '/settings': typeof SettingsRoute
   '/test': typeof TestRoute
   '/unknown': typeof UnknownRoute
@@ -130,7 +148,9 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/analytics'
     | '/logs'
+    | '/mqtt'
     | '/settings'
     | '/test'
     | '/unknown'
@@ -144,7 +164,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/analytics'
     | '/logs'
+    | '/mqtt'
     | '/settings'
     | '/test'
     | '/unknown'
@@ -158,7 +180,9 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/analytics'
     | '/logs'
+    | '/mqtt'
     | '/settings'
     | '/test'
     | '/unknown'
@@ -173,7 +197,9 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AnalyticsRoute: typeof AnalyticsRoute
   LogsRoute: typeof LogsRoute
+  MqttRoute: typeof MqttRoute
   SettingsRoute: typeof SettingsRoute
   TestRoute: typeof TestRoute
   UnknownRoute: typeof UnknownRoute
@@ -209,11 +235,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/mqtt': {
+      id: '/mqtt'
+      path: '/mqtt'
+      fullPath: '/mqtt'
+      preLoaderRoute: typeof MqttRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/logs': {
       id: '/logs'
       path: '/logs'
       fullPath: '/logs'
       preLoaderRoute: typeof LogsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/analytics': {
+      id: '/analytics'
+      path: '/analytics'
+      fullPath: '/analytics'
+      preLoaderRoute: typeof AnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -277,7 +317,9 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AnalyticsRoute: AnalyticsRoute,
   LogsRoute: LogsRoute,
+  MqttRoute: MqttRoute,
   SettingsRoute: SettingsRoute,
   TestRoute: TestRoute,
   UnknownRoute: UnknownRoute,

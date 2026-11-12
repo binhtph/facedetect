@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import sqlite3
 import threading
 import time
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Annotated
 
@@ -24,9 +25,16 @@ from .schemas import InsightFaceSettingsIn, CameraIn, LogsSettingsIn, MqttSettin
 from .storage_service import cleanup_storage_to_quota, delete_unreferenced_uploads, enforce_storage_quota, normalize_upload_ref, storage_status
 from .uploads import create_event_images, crop_saved_image_to_face, fetch_still_image, safe_upload_path, save_image_bytes, save_upload
 
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+logger = logging.getLogger("iris")
+logger.setLevel(logging.INFO)
+
 app = FastAPI(title="IRIS Face Recognition API")
-mqtt_command_client = None
-mqtt_command_lock = threading.Lock()
+mqtt_bridge = mqtt_homeassistant.MqttBridge(
+    on_camera_trigger=lambda slug: handle_mqtt_camera_trigger(slug),
+    on_connected=lambda config, reason: republish_mqtt_home_assistant(config, reason),
+    on_status_change=lambda severity, message: record_mqtt_status(severity, message),
+)
 model_rebuild_lock = threading.Lock()
 model_rebuild_status: dict = {
     "status": "idle",
@@ -65,6 +73,7 @@ def insightface_config() -> insightface_engine.InsightFaceConfig:
         provider=cfg.get("provider", "CPUExecutionProvider"),
         det_size=int(cfg.get("det_size", 640)),
         age_gender_enabled=bool(cfg.get("age_gender_enabled", False)),
+        max_faces=max(1, min(10, int(cfg.get("max_faces", 1)))),
     )
 
 
@@ -133,6 +142,7 @@ def public_settings() -> dict:
         "provider": cfg.get("provider", "CPUExecutionProvider"),
         "det_size": int(cfg.get("det_size", 640)),
         "age_gender_enabled": bool(cfg.get("age_gender_enabled", False)),
+        "max_faces": max(1, min(10, int(cfg.get("max_faces", 1)))),
         "thresholds": thresholds,
         "storage": {"max_storage_mb": int(storage.get("max_storage_mb", 2048))},
         "telegram_configured": bool(telegram.get("bot_token") and telegram.get("chat_id")),
@@ -385,12 +395,15 @@ def publish_mqtt_latest_image_if_configured() -> None:
     if not config.configured:
         return
     try:
-        base = config.base_topic.strip().strip("/") or "iris"
         latest_image = latest_mqtt_image_payload()
-        if latest_image:
-            mqtt_homeassistant.publish_many(config, [(f"{base}/latest_image", latest_image, True)])
-    except mqtt_homeassistant.MqttError:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.exception("Building the MQTT latest image failed")
+        return
+    if latest_image:
+        base = mqtt_homeassistant.base_topic(config)
+        # Images are large and only the newest one matters, so QoS 0 is enough;
+        # the bridge republishes it after every reconnect.
+        mqtt_bridge.publish([(f"{base}/latest_image", latest_image, True)], qos=0)
 
 
 def publish_mqtt_latest_image_async() -> None:
@@ -401,15 +414,8 @@ def publish_mqtt_state_if_configured(publish_image: bool = True) -> None:
     config = mqtt_config()
     if not config.configured:
         return
-    try:
-        base = config.base_topic.strip().strip("/") or "iris"
-        messages: list[tuple[str, str | bytes, bool]] = [
-            (f"{base}/availability", "online", True),
-            (f"{base}/state", json.dumps(current_mqtt_state(), ensure_ascii=False), True),
-        ]
-        mqtt_homeassistant.publish_many(config, messages)
-    except mqtt_homeassistant.MqttError:
-        pass
+    base = mqtt_homeassistant.base_topic(config)
+    mqtt_bridge.publish([(f"{base}/state", json.dumps(current_mqtt_state(), ensure_ascii=False), True)])
     if publish_image:
         publish_mqtt_latest_image_async()
 
@@ -418,18 +424,14 @@ def publish_mqtt_recognition_if_configured(event_id: str, publish_image: bool = 
     config = mqtt_config()
     if not config.configured:
         return
-    try:
-        base = config.base_topic.strip().strip("/") or "iris"
-        event_payload = mqtt_event_payload(event_id)
-        messages: list[tuple[str, str | bytes, bool]] = [
-            (f"{base}/availability", "online", True),
-            (f"{base}/state", json.dumps(current_mqtt_state(), ensure_ascii=False), True),
-        ]
-        if event_payload:
-            messages.append((f"{base}/event", json.dumps(event_payload, ensure_ascii=False), False))
-        mqtt_homeassistant.publish_many(config, messages)
-    except mqtt_homeassistant.MqttError:
-        pass
+    base = mqtt_homeassistant.base_topic(config)
+    event_payload = mqtt_event_payload(event_id)
+    messages: list[tuple[str, str | bytes, bool]] = [
+        (f"{base}/state", json.dumps(current_mqtt_state(), ensure_ascii=False), True),
+    ]
+    if event_payload:
+        messages.append((f"{base}/event", json.dumps(event_payload, ensure_ascii=False), False))
+    mqtt_bridge.publish(messages)
     if publish_image:
         publish_mqtt_latest_image_async()
 
@@ -438,21 +440,13 @@ def publish_mqtt_decision_fast(payload: dict) -> None:
     config = mqtt_config()
     if not config.configured:
         return
-    base = config.base_topic.strip().strip("/") or "iris"
-    messages: list[tuple[str, str | bytes, bool]] = [
-        (f"{base}/availability", "online", True),
-        (f"{base}/state", json.dumps(payload, ensure_ascii=False), True),
-        (f"{base}/event", json.dumps({"event_id": payload["latest_event_id"], **payload}, ensure_ascii=False), False),
-    ]
-    try:
-        if mqtt_command_client is None:
-            raise mqtt_homeassistant.MqttError("Persistent MQTT client is unavailable.")
-        mqtt_homeassistant.publish_many_connected(mqtt_command_client, messages)
-    except mqtt_homeassistant.MqttError:
-        try:
-            mqtt_homeassistant.publish_many(config, messages)
-        except mqtt_homeassistant.MqttError:
-            pass
+    base = mqtt_homeassistant.base_topic(config)
+    mqtt_bridge.publish(
+        [
+            (f"{base}/state", json.dumps(payload, ensure_ascii=False), True),
+            (f"{base}/event", json.dumps({"event_id": payload["latest_event_id"], **payload}, ensure_ascii=False), False),
+        ]
+    )
 
 
 def mqtt_discovery_messages(config: mqtt_homeassistant.MqttConfig) -> list[tuple[str, str | bytes, bool]]:
@@ -465,23 +459,46 @@ def mqtt_discovery_messages(config: mqtt_homeassistant.MqttConfig) -> list[tuple
     )
 
 
+def republish_mqtt_home_assistant(config: mqtt_homeassistant.MqttConfig, reason: str) -> int:
+    """Publish discovery, availability, state and the latest image on the shared connection.
+
+    Called by the bridge after every (re)connect and when Home Assistant restarts, so
+    entities never need a manual "save MQTT settings" to come back.
+    """
+    messages = mqtt_discovery_messages(config)
+    mqtt_bridge.publish(messages)
+    publish_mqtt_latest_image_if_configured()
+    with connect() as conn:
+        add_log(conn, "System", "info", f"Published Home Assistant discovery after {reason}")
+    return len(messages)
+
+
+def record_mqtt_status(severity: str, message: str) -> None:
+    with connect() as conn:
+        add_log(conn, "System", severity, message)
+
+
 def publish_mqtt_discovery_if_configured(reason: str, clear_trigger_slugs: list[str] | None = None) -> None:
     config = mqtt_config()
     if not config.configured:
         return
     try:
         messages = mqtt_discovery_messages(config)
-        for trigger_slug in clear_trigger_slugs or []:
-            clear_message = mqtt_homeassistant.camera_trigger_discovery_clear_message(config, trigger_slug)
-            if clear_message:
-                messages.append(clear_message)
-        mqtt_homeassistant.publish_many(config, messages)
-    except mqtt_homeassistant.MqttError as error:
+    except Exception as error:  # noqa: BLE001
+        logger.exception("Building Home Assistant discovery failed")
         with connect() as conn:
             add_log(conn, "System", "error", f"MQTT discovery failed after {reason}: {error}")
-    else:
-        with connect() as conn:
+        return
+    for trigger_slug in clear_trigger_slugs or []:
+        clear_message = mqtt_homeassistant.camera_trigger_discovery_clear_message(config, trigger_slug)
+        if clear_message:
+            messages.append(clear_message)
+    mqtt_bridge.publish(messages)
+    with connect() as conn:
+        if mqtt_bridge.connected:
             add_log(conn, "System", "info", f"Published Home Assistant discovery after {reason}")
+        else:
+            add_log(conn, "System", "warn", f"MQTT offline; discovery after {reason} queued until it reconnects")
 
 
 def publish_mqtt_discovery_async(reason: str, clear_trigger_slugs: list[str] | None = None) -> None:
@@ -493,18 +510,12 @@ def publish_mqtt_discovery_async(reason: str, clear_trigger_slugs: list[str] | N
 
 
 def restart_mqtt_command_listener() -> None:
-    global mqtt_command_client
-    with mqtt_command_lock:
-        mqtt_homeassistant.stop_command_listener(mqtt_command_client)
-        mqtt_command_client = None
-        config = mqtt_config()
-        if not config.configured:
-            return
-        try:
-            mqtt_command_client = mqtt_homeassistant.start_command_listener(config, handle_mqtt_camera_trigger)
-        except mqtt_homeassistant.MqttError as error:
-            with connect() as conn:
-                add_log(conn, "System", "error", f"MQTT command listener failed: {error}")
+    """(Re)start the shared MQTT connection with the saved settings."""
+    try:
+        mqtt_bridge.restart(mqtt_config())
+    except mqtt_homeassistant.MqttError as error:
+        with connect() as conn:
+            add_log(conn, "System", "error", f"MQTT connection could not be started: {error}")
 
 
 def handle_mqtt_camera_trigger(trigger_slug: str) -> None:
@@ -564,11 +575,8 @@ def rebuild_missing_embeddings() -> None:
         return
     rebuilt = 0
     for face in faces:
-        path = safe_upload_path(face.get("source_image_path") or face.get("image_path") or "")
-        if not path or not path.exists():
-            continue
         try:
-            indexed = insightface_engine.index_face(config, path.read_bytes(), face["person_id"])
+            indexed = index_stored_face(config, face)
         except insightface_engine.InsightFaceError:
             continue
         with connect() as conn:
@@ -602,10 +610,7 @@ def startup() -> None:
 
 @app.on_event("shutdown")
 def shutdown() -> None:
-    global mqtt_command_client
-    with mqtt_command_lock:
-        mqtt_homeassistant.stop_command_listener(mqtt_command_client)
-        mqtt_command_client = None
+    mqtt_bridge.stop()
 
 
 @app.get("/api/health")
@@ -656,21 +661,15 @@ def save_mqtt_settings(payload: MqttSettingsIn) -> dict:
             },
         )
         add_log(conn, "System", "info", f"Saved MQTT configuration for {next_config.host}:{next_config.port}")
-    if next_config.configured:
-        try:
-            messages = mqtt_discovery_messages(next_config)
-            latest_image = latest_mqtt_image_payload()
-            if latest_image:
-                base = next_config.base_topic.strip().strip("/") or "iris"
-                messages.append((f"{base}/latest_image", latest_image, True))
-            mqtt_homeassistant.publish_many(next_config, messages)
-        except mqtt_homeassistant.MqttError as error:
-            with connect() as conn:
-                add_log(conn, "System", "error", f"MQTT discovery failed after save: {error}")
-            raise HTTPException(status_code=400, detail=str(error)) from error
-        with connect() as conn:
-            add_log(conn, "System", "info", f"Published Home Assistant discovery to {next_config.discovery_prefix}")
+    # Reconnect the shared client with the new settings. Discovery, state and the latest
+    # image are republished automatically as soon as the broker accepts the connection.
     restart_mqtt_command_listener()
+    if next_config.configured and not mqtt_bridge.wait_until_connected(8):
+        detail = mqtt_bridge.status().get("last_error") or f"No answer from {next_config.host}:{next_config.port}"
+        raise HTTPException(
+            status_code=400,
+            detail=f"Settings saved, but MQTT is not connected yet ({detail}). IRIS keeps retrying in the background.",
+        )
     return public_mqtt_settings()
 
 
@@ -690,20 +689,29 @@ def test_mqtt_settings() -> dict:
 @app.post("/api/settings/mqtt/discovery")
 def publish_home_assistant_discovery() -> dict:
     config = mqtt_config()
-    try:
-        messages = mqtt_discovery_messages(config)
-        latest_image = latest_mqtt_image_payload()
-        if latest_image:
-            base = config.base_topic.strip().strip("/") or "iris"
-            messages.append((f"{base}/latest_image", latest_image, True))
-        mqtt_homeassistant.publish_many(config, messages)
-    except mqtt_homeassistant.MqttError as error:
-        with connect() as conn:
-            add_log(conn, "System", "error", f"MQTT discovery failed: {error}")
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    with connect() as conn:
-        add_log(conn, "System", "info", f"Published Home Assistant discovery to {config.discovery_prefix}")
-    return {"ok": True, "entities": len(messages) - 2}
+    if not config.configured:
+        raise HTTPException(status_code=400, detail="MQTT is not configured.")
+    if not mqtt_bridge.connected:
+        detail = mqtt_bridge.status().get("last_error") or "not connected"
+        raise HTTPException(status_code=400, detail=f"MQTT is not connected ({detail}).")
+    count = republish_mqtt_home_assistant(config, "manual request")
+    return {"ok": True, "entities": count - 2}
+
+
+@app.get("/api/mqtt/status")
+def get_mqtt_status() -> dict:
+    return mqtt_bridge.status()
+
+
+@app.get("/api/mqtt/messages")
+def get_mqtt_messages(limit: Annotated[int, Query(ge=1, le=200)] = 100) -> dict:
+    return {"status": mqtt_bridge.status(), "messages": mqtt_bridge.messages(limit)}
+
+
+@app.delete("/api/mqtt/messages")
+def clear_mqtt_messages() -> dict:
+    mqtt_bridge.clear_messages()
+    return {"ok": True}
 
 
 @app.get("/api/settings/telegram")
@@ -742,15 +750,11 @@ def rebuild_model_embeddings(config: dict, faces: list[dict]) -> None:
         rebuilt: list[tuple[str, dict]] = []
         failures: list[str] = []
         for position, face in enumerate(faces, start=1):
-            path = safe_upload_path(face.get("source_image_path") or face.get("image_path") or "")
-            if not path or not path.exists():
+            try:
+                indexed = index_stored_face(runtime_config, face)
+                rebuilt.append((face["id"], indexed))
+            except insightface_engine.InsightFaceError:
                 failures.append(face["id"])
-            else:
-                try:
-                    indexed = insightface_engine.index_face(runtime_config, path.read_bytes(), face["person_id"])
-                    rebuilt.append((face["id"], indexed))
-                except insightface_engine.InsightFaceError:
-                    failures.append(face["id"])
             with model_rebuild_lock:
                 model_rebuild_status["processed"] = position
                 model_rebuild_status["progress"] = round(position * 100 / len(faces)) if faces else 100
@@ -947,6 +951,96 @@ def dashboard() -> dict:
             "mqtt": bool(mqtt["configured"]),
             "telegram": bool(telegram["configured"]),
         },
+    }
+
+
+@app.get("/api/analytics")
+def analytics(
+    days: Annotated[int, Query(ge=1, le=365)] = 7,
+    tz_offset_minutes: Annotated[int, Query(ge=-840, le=840)] = 0,
+) -> dict:
+    """Recognition statistics for the analytics page.
+
+    ``tz_offset_minutes`` is the browser's UTC offset (e.g. +420 for Vietnam) so daily and
+    hourly buckets follow the viewer's local time instead of UTC.
+    """
+    local_tz = timezone(timedelta(minutes=tz_offset_minutes))
+    now_local = datetime.now(local_tz)
+    first_day = (now_local - timedelta(days=days - 1)).date()
+    since_utc = datetime.combine(first_day, datetime.min.time(), tzinfo=local_tz).astimezone(timezone.utc)
+    with connect() as conn:
+        rows = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT type, person_id, person_name, confidence, processing_ms, camera_name, event_time
+                FROM events
+                WHERE event_time >= ? AND type IN ('known', 'review', 'unknown', 'no_face')
+                ORDER BY event_time
+                """,
+                (since_utc.isoformat(),),
+            ).fetchall()
+        )
+    kinds = ("known", "review", "unknown", "no_face")
+    daily: dict[str, dict] = {}
+    for offset in range(days):
+        key = (first_day + timedelta(days=offset)).isoformat()
+        daily[key] = {"date": key, "total": 0, **{kind: 0 for kind in kinds}}
+    hourly = [{"hour": hour, "count": 0} for hour in range(24)]
+    people: dict[str, dict] = {}
+    cameras: dict[str, int] = {}
+    totals = {kind: 0 for kind in kinds}
+    known_confidences: list[float] = []
+    processing: list[float] = []
+    for row in rows:
+        try:
+            moment = datetime.fromisoformat(str(row["event_time"]).replace("Z", "+00:00")).astimezone(local_tz)
+        except ValueError:
+            continue
+        kind = row["type"]
+        bucket = daily.get(moment.date().isoformat())
+        if bucket is None:
+            continue
+        bucket[kind] += 1
+        bucket["total"] += 1
+        totals[kind] += 1
+        hourly[moment.hour]["count"] += 1
+        camera = row.get("camera_name") or "Unknown camera"
+        cameras[camera] = cameras.get(camera, 0) + 1
+        if row.get("processing_ms"):
+            processing.append(float(row["processing_ms"]))
+        if kind in ("known", "review") and row.get("person_id"):
+            entry = people.setdefault(
+                row["person_id"],
+                {"person_id": row["person_id"], "person_name": row["person_name"], "count": 0, "confidence_sum": 0.0, "last_seen": ""},
+            )
+            entry["count"] += 1
+            entry["confidence_sum"] += float(row.get("confidence") or 0)
+            entry["last_seen"] = max(entry["last_seen"], str(row["event_time"]))
+            entry["person_name"] = row["person_name"] or entry["person_name"]
+            if kind == "known":
+                known_confidences.append(float(row.get("confidence") or 0))
+    top_people = sorted(people.values(), key=lambda item: (-item["count"], item["person_name"] or ""))[:10]
+    for entry in top_people:
+        entry["avg_confidence"] = round(entry.pop("confidence_sum") / entry["count"], 1) if entry["count"] else 0
+    total = sum(totals.values())
+    faces = totals["known"] + totals["review"] + totals["unknown"]
+    return {
+        "days": days,
+        "summary": {
+            "total": total,
+            **totals,
+            "unique_people": len(people),
+            "recognized_rate": round((totals["known"] + totals["review"]) / faces * 100, 1) if faces else 0,
+            "avg_known_confidence": round(sum(known_confidences) / len(known_confidences), 1) if known_confidences else 0,
+            "avg_processing_ms": round(sum(processing) / len(processing), 1) if processing else 0,
+        },
+        "daily": list(daily.values()),
+        "hourly": hourly,
+        "top_people": top_people,
+        "cameras": [
+            {"camera_name": name, "count": count}
+            for name, count in sorted(cameras.items(), key=lambda item: -item[1])[:10]
+        ],
     }
 
 
@@ -1236,6 +1330,49 @@ def delete_event(event_id: str) -> dict:
     return {"ok": True}
 
 
+def event_face_box_in_original(event: dict) -> dict | None:
+    """Bounding box of the event's face relative to the original image.
+
+    ``face_details_json`` keeps the box from detection time (original coordinates). The
+    ``face_bounding_box`` column is rewritten relative to the face crop once thumbnails are
+    made, so it is only usable while no crop exists yet.
+    """
+    try:
+        details = json.loads(event.get("face_details_json") or "{}")
+    except (TypeError, ValueError):
+        details = {}
+    box = details.get("bounding_box") if isinstance(details, dict) else None
+    if isinstance(box, dict) and box.get("Width"):
+        return box
+    if not event.get("face_crop_path"):
+        try:
+            box = json.loads(event.get("face_bounding_box") or "null")
+        except (TypeError, ValueError):
+            box = None
+        if isinstance(box, dict) and box.get("Width"):
+            return box
+    return None
+
+
+def index_stored_face(config: insightface_engine.InsightFaceConfig, face: dict) -> dict:
+    """Re-index a stored reference face for a new model.
+
+    The face crop is tried first because it is centred on the trained person, while the
+    source image can be a group photo where the largest face is someone else.
+    """
+    candidates = [face.get("image_path"), face.get("source_image_path")]
+    last_error: Exception | None = None
+    for candidate in dict.fromkeys(item for item in candidates if item):
+        path = safe_upload_path(candidate)
+        if not path or not path.exists():
+            continue
+        try:
+            return insightface_engine.index_face(config, path.read_bytes(), face["person_id"])
+        except insightface_engine.InsightFaceError as error:
+            last_error = error
+    raise insightface_engine.InsightFaceError(str(last_error) if last_error else "Reference image file not found.")
+
+
 def train_event_face_to_person(event_id: str, person_id: str) -> dict:
     with connect() as conn:
         event = row_to_dict(conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone())
@@ -1253,7 +1390,9 @@ def train_event_face_to_person(event_id: str, person_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Event image file not found.")
 
     try:
-        indexed = insightface_engine.index_face(insightface_config(), file_path.read_bytes(), person_id)
+        indexed = insightface_engine.index_face(
+            insightface_config(), file_path.read_bytes(), person_id, event_face_box_in_original(event)
+        )
     except insightface_engine.InsightFaceError as error:
         with connect() as conn:
             add_log(conn, "InsightFace", "error", str(error))
@@ -1447,7 +1586,7 @@ def recognize_image_bytes(
     event_id = event_id or new_id("evt")
     recognition_started = time.perf_counter()
     try:
-        result = insightface_engine.search_face(insightface_config(), image, references, thresholds["match"])
+        result = insightface_engine.search_faces(insightface_config(), image, references, thresholds["match"])
     except insightface_engine.InsightFaceError as error:
         processing_ms = round((time.perf_counter() - recognition_started) * 1000, 2)
         if is_no_face_error(error):
@@ -1471,7 +1610,7 @@ def recognize_image_bytes(
             add_log(conn, "InsightFace", "error", str(error))
         raise HTTPException(status_code=400, detail=str(error)) from error
     processing_ms = round((time.perf_counter() - recognition_started) * 1000, 2)
-    if not result.get("face_detected"):
+    if not result.get("face_detected") or not result.get("faces"):
         event = mark_event_failed(
             event_id, "No face detected", camera_name, "No face detected", rel_path, "no_face", camera_id, publish=notify,
             processing_ms=processing_ms,
@@ -1479,13 +1618,77 @@ def recognize_image_bytes(
         if notify:
             send_telegram_for_event(event, "No face detected", "no_face", 0, rel_path)
         enforce_storage_quota()
-        return get_event(event_id) | {"unknown_id": None}
-    face_bounding_box = result.get("bounding_box")
-    face_bounding_box_json = json.dumps(face_bounding_box) if face_bounding_box else ""
+        return get_event(event_id) | {"unknown_id": None, "additional_events": []}
 
-    match = result["matches"][0] if result["matches"] else None
+    # One event per recognized face. The largest face keeps the requested event id so
+    # camera triggers and the API keep working; extra faces get their own events.
+    faces = result["faces"]
+    event_ids = [event_id] + [new_id("evt") for _ in faces[1:]]
+    stored = [
+        store_face_event(face, face_event_id, rel_path, camera_id, camera_name, processing_ms, thresholds)
+        for face, face_event_id in zip(faces, event_ids)
+    ]
+    if len(faces) > 1:
+        with connect() as conn:
+            add_log(conn, "Recognition", "info", f"{len(faces)} faces recognized in one image from {camera_name}")
+
+    # Publish extra faces first and the largest face last, so the retained MQTT state
+    # (Latest Person sensor) ends on the main face while every face still gets its own
+    # iris/event message.
+    for face, info in reversed(list(zip(faces, stored))):
+        if notify:
+            publish_mqtt_decision_fast({
+                "latest_event_id": info["event_id"],
+                "latest_person": info["person_name"],
+                "latest_person_alias": info["person_alias"],
+                "latest_person_name": info["person_name"],
+                "latest_person_id": info["person_id"],
+                "latest_type": info["event_type"],
+                "latest_decision": info["decision"],
+                "latest_camera": camera_name,
+                "latest_confidence": info["confidence"],
+                "latest_time": info["time"],
+                "latest_attributes": compact_face_attributes(face.get("face_details", {})),
+                "faces_in_image": len(faces),
+            })
+        finalize_recognition_event_async(
+            info["event_id"],
+            rel_path,
+            face.get("bounding_box"),
+            face.get("face_details", {}),
+            notify and info["event_id"] == event_id,
+        )
+    if notify:
+        for info in stored:
+            send_telegram_for_event(
+                get_event(info["event_id"]),
+                person_name=info["person_name"],
+                confidence=info["confidence"],
+                event_type=info["event_type"],
+                rel_path=rel_path,
+            )
+    enforce_storage_quota()
+    event = get_event(event_id)
+    return event | {
+        "unknown_id": stored[0]["unknown_id"],
+        "additional_events": [get_event(info["event_id"]) for info in stored[1:]],
+    }
+
+
+def store_face_event(
+    face: dict,
+    event_id: str,
+    rel_path: str,
+    camera_id: str,
+    camera_name: str,
+    processing_ms: float,
+    thresholds: dict,
+) -> dict:
+    """Insert (or update) the event row for one recognized face and return a summary."""
+    face_bounding_box = face.get("bounding_box")
+    face_bounding_box_json = json.dumps(face_bounding_box) if face_bounding_box else ""
+    match = face["matches"][0] if face.get("matches") else None
     now = utc_now()
-    unknown_id = None
     if match:
         person_id = match["person_id"]
         confidence = float(match["similarity"])
@@ -1524,7 +1727,7 @@ def recognize_image_bytes(
                     camera_name,
                     event_type,
                     match["face_id"],
-                    result["inference_id"],
+                    face["inference_id"],
                     processing_ms,
                     face_bounding_box_json,
                     rel_path,
@@ -1541,93 +1744,81 @@ def recognize_image_bytes(
             if camera_id:
                 conn.execute("UPDATE cameras SET last_detection = ?, updated_at = ? WHERE id = ?", (now, now, camera_id))
             add_log(conn, "Recognition", "info", f"Match: {person_name} {confidence:.1f}% from {camera_name}")
-    else:
-        with connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO events
-                (id, person_name, confidence, camera_id, camera_name, type, inference_id, processing_ms, face_bounding_box, image_path, thumb_path, face_crop_path, event_time, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                  person_id = NULL,
-                  person_name = excluded.person_name,
-                  confidence = excluded.confidence,
-                  camera_id = excluded.camera_id,
-                  camera_name = excluded.camera_name,
-                  type = excluded.type,
-                  face_id = NULL,
-                  inference_id = excluded.inference_id,
-                  processing_ms = excluded.processing_ms,
-                  face_bounding_box = excluded.face_bounding_box,
-                  image_path = excluded.image_path,
-                  thumb_path = excluded.thumb_path,
-                  face_crop_path = excluded.face_crop_path,
-                  original_deleted_at = NULL,
-                  event_time = excluded.event_time
-                """,
-                (
-                    event_id,
-                    "Unknown Visitor",
-                    0,
-                    camera_id,
-                    camera_name,
-                    "unknown",
-                    result["inference_id"],
-                    processing_ms,
-                    face_bounding_box_json,
-                    rel_path,
-                    "",
-                    "",
-                    now,
-                    now,
-                ),
-            )
-            unknown_id = new_id("uv")
-            conn.execute(
-                """
-                INSERT INTO unknown_visitors
-                (id, camera_id, camera_name, image_path, detections, event_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?)
-                """,
-                (unknown_id, camera_id, camera_name, rel_path, event_id, now, now),
-            )
-            if camera_id:
-                conn.execute("UPDATE cameras SET last_detection = ?, updated_at = ? WHERE id = ?", (now, now, camera_id))
-            add_log(conn, "Recognition", "warn", f"No match at {camera_name}")
-    if notify:
-        details = result.get("face_details", {})
-        publish_mqtt_decision_fast({
-            "latest_event_id": event_id,
-            "latest_person": person_name if match else "Unknown Visitor",
-            "latest_person_alias": (person.get("alias") or "") if match else "",
-            "latest_person_name": person_name if match else "Unknown Visitor",
-            "latest_person_id": person_id if match else "",
-            "latest_type": event_type if match else "unknown",
-            "latest_decision": "auto_accept" if match and event_type == "known" else (event_type if match else "unknown"),
-            "latest_camera": camera_name,
-            "latest_confidence": confidence if match else 0,
-            "latest_time": now,
-            "latest_attributes": compact_face_attributes(details),
-        })
-    finalize_recognition_event_async(
-        event_id,
-        rel_path,
-        face_bounding_box,
-        result.get("face_details", {}),
-        notify,
-    )
-    event = get_event(event_id)
-    if notify:
-        send_telegram_for_event(
-            event,
-            person_name=person_name if match else "Unknown Visitor",
-            confidence=float(match["similarity"]) if match else 0,
-            event_type="known" if match and float(match["similarity"]) >= thresholds["auto_accept"] else ("review" if match else "unknown"),
-            rel_path=rel_path,
+        return {
+            "event_id": event_id,
+            "person_id": person_id,
+            "person_name": person_name,
+            "person_alias": (person.get("alias") or "") if person else "",
+            "confidence": confidence,
+            "event_type": event_type,
+            "decision": "auto_accept" if event_type == "known" else event_type,
+            "unknown_id": None,
+            "time": now,
+        }
+
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO events
+            (id, person_name, confidence, camera_id, camera_name, type, inference_id, processing_ms, face_bounding_box, image_path, thumb_path, face_crop_path, event_time, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              person_id = NULL,
+              person_name = excluded.person_name,
+              confidence = excluded.confidence,
+              camera_id = excluded.camera_id,
+              camera_name = excluded.camera_name,
+              type = excluded.type,
+              face_id = NULL,
+              inference_id = excluded.inference_id,
+              processing_ms = excluded.processing_ms,
+              face_bounding_box = excluded.face_bounding_box,
+              image_path = excluded.image_path,
+              thumb_path = excluded.thumb_path,
+              face_crop_path = excluded.face_crop_path,
+              original_deleted_at = NULL,
+              event_time = excluded.event_time
+            """,
+            (
+                event_id,
+                "Unknown Visitor",
+                0,
+                camera_id,
+                camera_name,
+                "unknown",
+                face["inference_id"],
+                processing_ms,
+                face_bounding_box_json,
+                rel_path,
+                "",
+                "",
+                now,
+                now,
+            ),
         )
-    enforce_storage_quota()
-    event = get_event(event_id)
-    return event | {"unknown_id": unknown_id}
+        unknown_id = new_id("uv")
+        conn.execute(
+            """
+            INSERT INTO unknown_visitors
+            (id, camera_id, camera_name, image_path, detections, event_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+            """,
+            (unknown_id, camera_id, camera_name, rel_path, event_id, now, now),
+        )
+        if camera_id:
+            conn.execute("UPDATE cameras SET last_detection = ?, updated_at = ? WHERE id = ?", (now, now, camera_id))
+        add_log(conn, "Recognition", "warn", f"No match at {camera_name}")
+    return {
+        "event_id": event_id,
+        "person_id": "",
+        "person_name": "Unknown Visitor",
+        "person_alias": "",
+        "confidence": 0,
+        "event_type": "unknown",
+        "decision": "unknown",
+        "unknown_id": unknown_id,
+        "time": now,
+    }
 
 
 def process_camera_trigger_event(event_id: str, camera: dict) -> None:

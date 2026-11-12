@@ -12,12 +12,12 @@
 
 ## Recognition path
 
-1. Decode the image and select the largest face.
-2. Generate a normalized embedding with InsightFace.
+1. Decode the image, detect faces and keep up to `max_faces` of them, largest first. Extra faces that are tiny (< 40 px) or have a detection score < 0.6 are skipped.
+2. Generate a normalized embedding with InsightFace for each face.
 3. Compare it with active reference embeddings using cosine similarity.
-4. Classify it as unknown, review, or known using the configured thresholds.
+4. Classify it as unknown, review, or known using the configured thresholds. Each face is its own event; the largest face keeps the request's `event_id`, the others are returned in `additional_events`.
 5. Reuse the same inference output for face details.
-6. Publish the MQTT decision immediately through the persistent connection.
+6. Publish the MQTT decision immediately through the persistent connection (extra faces first, the largest face last so the `Latest Person` sensor ends on the main face).
 7. Generate thumbnails/crops and publish the MQTT image in a background thread.
 
 Default model is `buffalo_s` and is downloaded automatically on startup. Default match/auto-accept thresholds are 40/55. Calibrate them against the actual cameras.
@@ -28,16 +28,36 @@ Default model is `buffalo_s` and is downloaded automatically on startup. Default
 - `provider`: ONNX CPU, CUDA, or Intel OpenVINO CPU/iGPU/NPU/Auto;
 - `det_size`: 320–1280;
 - `age_gender_enabled`: loads `genderage` only when enabled; defaults to `false` for lower latency.
+- `max_faces`: 1–10 faces per image; defaults to 1.
 
-Changing model packs rebuilds reference embeddings from `person_faces.source_image_path`. Other runtime changes clear the engine cache without rebuilding embeddings.
+Changing model packs rebuilds reference embeddings, preferring the face crop `person_faces.image_path` over `source_image_path` (the original can be a group photo). Training from an event picks that event's face using the original bounding box stored in `face_details_json`. Other runtime changes clear the engine cache without rebuilding embeddings.
+
+## MQTT
+
+- One persistent client `<device_id>_iris` for both publishing and commands (`MqttBridge` in `mqtt_homeassistant.py`).
+- Last Will: `<base>/availability` = `offline` (retained). On connect: `online`, subscribe to `<base>/camera/+/trigger/set` and `<discovery_prefix>/status`, then republish discovery, state and the latest image.
+- `homeassistant/status` = `online` (Home Assistant restart) also republishes discovery.
+- Events and state use QoS 1 (paho keeps up to 500 messages while disconnected); `latest_image` uses QoS 0.
+- Debugging: `GET /api/mqtt/status`, `GET|DELETE /api/mqtt/messages`, and the **MQTT Monitor** page.
+
+## Home Assistant ingress
+
+The Supervisor serves the add-on under `/api/hassio_ingress/<token>/` and strips that prefix before forwarding into the container, adding an `X-Ingress-Path` header.
+
+- `docker/web-server.mjs` puts the prefix back on the URL before SSR.
+- `src/router.tsx` uses a TanStack Router `rewrite` to add/strip the prefix (TanStack Start always overrides `basepath` with its build-time value).
+- `src/lib/http.ts` adds the prefix to the API base; `src/lib/basepath.ts` provides `appPath()` for absolute links.
+- `docker/nginx.conf` rewrites `"/assets/` in HTML with `sub_filter`; `vite.config.ts` (`renderBuiltUrl`) makes chunk preloads follow the page path.
 
 ## Main API
 
 - `PUT /api/settings/insightface`
 - `POST /api/settings/insightface/test`
-- `POST /api/recognize`
+- `POST /api/recognize` (also returns `additional_events` when several faces are found)
 - `POST /api/people/{person_id}/faces`
 - `GET|POST /api/cameras/trigger/{trigger_slug}`
+- `GET /api/analytics?days=7&tz_offset_minutes=420`
+- `GET /api/mqtt/status`, `GET|DELETE /api/mqtt/messages`
 - `POST /api/settings/data/clear`
 
 ## Engineering rules
@@ -52,8 +72,11 @@ Changing model packs rebuilds reference embeddings from `person_faces.source_ima
 
 ```bash
 python -m py_compile backend/app/*.py
+npm run lint
 npm run build
 ```
+
+MQTT, multi-face and ingress checks: see [tests/README.md](tests/README.md).
 
 ## Licensing
 

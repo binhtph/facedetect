@@ -72,6 +72,7 @@ function SettingsPage() {
   const [provider, setProvider] = useState("CPUExecutionProvider");
   const [detSize, setDetSize] = useState(640);
   const [ageGenderEnabled, setAgeGenderEnabled] = useState(false);
+  const [maxFaces, setMaxFaces] = useState(1);
   const [match, setMatch] = useState([40]);
   const [accept, setAccept] = useState([55]);
   const [mqttHost, setMqttHost] = useState("");
@@ -96,6 +97,7 @@ function SettingsPage() {
     setProvider(settings.provider);
     setDetSize(settings.det_size);
     setAgeGenderEnabled(settings.age_gender_enabled ?? false);
+    setMaxFaces(settings.max_faces ?? 1);
     setMatch([settings.thresholds.match]);
     setAccept([settings.thresholds.auto_accept]);
     setMaxStorageMb(settings.storage?.max_storage_mb ?? 2048);
@@ -173,6 +175,7 @@ function SettingsPage() {
     provider?: string;
     det_size?: number;
     age_gender_enabled?: boolean;
+    max_faces?: number;
   }) => {
     const nextModelName = next.model_name ?? modelName;
     const model = models.find((item) => item.model_name === nextModelName);
@@ -189,6 +192,7 @@ function SettingsPage() {
       provider: next.provider ?? provider,
       det_size: next.det_size ?? detSize,
       age_gender_enabled: next.age_gender_enabled ?? ageGenderEnabled,
+      max_faces: next.max_faces ?? maxFaces,
     });
   };
 
@@ -203,11 +207,12 @@ function SettingsPage() {
         provider,
         det_size: detSize,
         age_gender_enabled: ageGenderEnabled,
+        max_faces: maxFaces,
       });
     } else if (model?.status === "error") {
       setPendingModelSave(null);
     }
-  }, [ageGenderEnabled, detSize, models, pendingModelSave, provider, saveInsightFace]);
+  }, [ageGenderEnabled, detSize, maxFaces, models, pendingModelSave, provider, saveInsightFace]);
 
   const saveThresholds = useMutation({
     mutationFn: () => api.saveThresholds({ match: match[0], auto_accept: accept[0] }),
@@ -493,6 +498,36 @@ function SettingsPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-4 rounded-md border border-border p-4">
+              <div>
+                <Label htmlFor="max-faces">Faces per image</Label>
+                <p className="text-xs text-muted-foreground">
+                  Recognize several people in one snapshot (largest faces first). Each face becomes
+                  its own event and MQTT message. Small or low-confidence background faces are
+                  ignored.
+                </p>
+              </div>
+              <Select
+                value={String(maxFaces)}
+                onValueChange={(value) => {
+                  const nextMaxFaces = Number(value);
+                  setMaxFaces(nextMaxFaces);
+                  saveInsightFaceConfig({ max_faces: nextMaxFaces });
+                }}
+              >
+                <SelectTrigger id="max-faces" className="w-40 shrink-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 (largest only)</SelectItem>
+                  <SelectItem value="2">Up to 2</SelectItem>
+                  <SelectItem value="3">Up to 3</SelectItem>
+                  <SelectItem value="5">Up to 5</SelectItem>
+                  <SelectItem value="10">Up to 10</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="mt-5 flex items-center justify-between gap-4 rounded-md border border-border p-4">

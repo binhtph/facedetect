@@ -81,6 +81,9 @@ export interface EventItem {
   original_deleted_at?: string;
   is_trained?: boolean;
   isTrained?: boolean;
+  /** Present on /api/recognize responses: events for the other faces in the same image. */
+  additional_events?: EventItem[];
+  unknown_id?: string | null;
 }
 
 export interface UnknownVisitor {
@@ -116,6 +119,7 @@ export interface Settings {
     | "OpenVINONPU";
   det_size: number;
   age_gender_enabled: boolean;
+  max_faces: number;
   thresholds: { match: number; auto_accept: number };
   storage: { max_storage_mb: number };
   telegram_configured: boolean;
@@ -216,4 +220,57 @@ export interface DashboardData {
     mqtt: boolean;
     telegram: boolean;
   };
+}
+
+export interface AnalyticsData {
+  days: number;
+  summary: {
+    total: number;
+    known: number;
+    review: number;
+    unknown: number;
+    no_face: number;
+    unique_people: number;
+    recognized_rate: number;
+    avg_known_confidence: number;
+    avg_processing_ms: number;
+  };
+  daily: Array<{
+    date: string;
+    total: number;
+    known: number;
+    review: number;
+    unknown: number;
+    no_face: number;
+  }>;
+  hourly: Array<{ hour: number; count: number }>;
+  top_people: Array<{
+    person_id: string;
+    person_name: string;
+    count: number;
+    avg_confidence: number;
+    last_seen: string;
+  }>;
+  cameras: Array<{ camera_name: string; count: number }>;
+}
+
+export interface MqttStatus {
+  configured: boolean;
+  connected: boolean;
+  host: string;
+  port: number;
+  client_id: string;
+  last_connected_at: string;
+  last_disconnected_at: string;
+  last_error: string;
+}
+
+export interface MqttMessage {
+  time: string;
+  direction: "out" | "in" | "system";
+  topic: string;
+  payload: string;
+  retain: boolean;
+  qos: number;
+  status: string;
 }

@@ -4,6 +4,22 @@
 
 IRIS performs local face recognition with InsightFace. Images, embeddings, settings, and logs remain on the machine running the application; no cloud account is required.
 
+## Versions and repositories
+
+Current version: **2.0.0** (image `ghcr.io/binhtph/facedetect:2.0.0`). See [CHANGELOG.md](CHANGELOG.md).
+
+| How to run            | Repository                                                                     |
+| --------------------- | ------------------------------------------------------------------------------ |
+| Standalone Docker     | [binhtph/facedetect](https://github.com/binhtph/facedetect) (this repository)  |
+| Home Assistant add-on | [binhtph/ha-addons](https://github.com/binhtph/ha-addons), folder `facedetect` |
+
+This project continues from the original author's Release 1.0:
+
+- [anhnvme/facedetect](https://github.com/anhnvme/facedetect): standalone Docker.
+- [anhnvme/hass-facedetect-addon](https://github.com/anhnvme/hass-facedetect-addon): Home Assistant add-on.
+
+According to the original author, it is a basic face recognition app that has been running in several friends' homes for more than a year.
+
 ## Run with Docker Compose
 
 ```bash
@@ -46,7 +62,7 @@ For Intel iGPU/OpenVINO in Docker, pass the DRM device into the container:
 ```yaml
 services:
   iris:
-    image: ghcr.io/anhnvme/facedetect:latest
+    image: ghcr.io/binhtph/facedetect:latest
     ports:
       - "8080:80"
     volumes:
@@ -59,6 +75,79 @@ services:
 ```
 
 Then select an OpenVINO provider in Settings, for example OpenVINO CPU/iGPU/Auto. The host must have a working Intel graphics driver and `/dev/dri` available.
+
+## MQTT and model setup
+
+Configure MQTT and the model to suit your machine and use case:
+
+- **Model:** pick one using [Model and speed notes](#model-and-speed-notes) above. Start with `buffalo_s` on modest hardware.
+- **MQTT:** enter your broker in **Settings → MQTT**. IRIS keeps one persistent connection, reconnects by itself and republishes Home Assistant discovery after IRIS, the broker or Home Assistant restarts. The **MQTT Monitor** page shows the connection state and the messages sent/received.
+- **Several people in one frame:** set **Settings → Faces per image** (default 1 = largest face only).
+
+Every recognition publishes a message on `iris/event` (one per face) and updates sensors such as `Latest Person` and `Latest Recognition Event`. When IRIS loses its connection, the device shows as _Unavailable_ in Home Assistant.
+
+Example automation that notifies when a known person is recognized:
+
+```yaml
+automation:
+  - alias: IRIS - known person
+    triggers:
+      - trigger: mqtt
+        topic: iris/event
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.payload_json.latest_type == 'known' }}"
+    actions:
+      - action: notify.notify
+        data:
+          message: "{{ trigger.payload_json.latest_person }} arrived at {{ trigger.payload_json.latest_camera }}"
+```
+
+## Adding cameras with go2rtc
+
+IRIS does not watch video continuously. On every **trigger** it fetches **one still image** from the camera and recognizes it. The easiest way to get still images from RTSP cameras is [go2rtc](https://github.com/AlexxIT/go2rtc):
+
+1. Add the camera to go2rtc, for example in `go2rtc.yaml`:
+
+   ```yaml
+   streams:
+     front_gate: rtsp://user:pass@192.168.1.50:554/stream1
+   ```
+
+2. The camera's still image URL looks like:
+
+   ```text
+   http://<go2rtc-host>:1984/api/frame.jpeg?src=<camera_name>
+   ```
+
+   For example `http://192.168.1.10:1984/api/frame.jpeg?src=front_gate`. Open it in a browser; you should see a JPEG.
+
+3. In IRIS open **Cameras → Add camera** and paste the link into **Still image URL**. Adjust **Cooldown** to avoid repeated recognitions.
+
+4. Trigger recognition in one of two ways:
+   - The **MQTT button** `Trigger <camera name>` that IRIS creates in Home Assistant (the entity id follows the camera name in IRIS), e.g. from an automation on motion or a doorbell press:
+
+     ```yaml
+     actions:
+       - action: button.press
+         target:
+           entity_id: button.iris_face_recognition_trigger_front_gate
+     ```
+
+   - **HTTP:** `GET` or `POST` to `http://<IRIS-host>:8080/api/cameras/trigger/<slug>` (the full link is shown on the camera page).
+
+## Important recommendations
+
+- Use it in areas that **also have other physical security layers**; do not make IRIS the only condition for unlocking doors or disarming alarms.
+- **Test thoroughly before relying on it**, with the real camera, mounting angle and day/night lighting.
+- **Do not over-train one person with too many images**, especially blurry or bad-angle ones: it tends to increase false matches.
+
+## Known issues
+
+- **The displayed percentage is often not high**, yet in the original author's experience false matches are rare. The number is a similarity score (cosine similarity × 100), not a probability; defaults are match 40 / auto-accept 55.
+- **No liveness / anti-spoofing check yet:** a printed photo or a photo on a phone screen held in front of the camera can be accepted as the real person. This is why physical security should be combined.
+- The camera fields **Min face** and **Min confidence** are stored but **not applied yet** during recognition.
+- Add-on: port `8080` has no login; prefer the Home Assistant sidebar.
 
 ## Persistent data
 
@@ -79,10 +168,10 @@ Local development defaults to `backend/data/`. Override the root with `IRIS_DATA
 docker run -d --name iris \
   -p 8080:80 \
   -v "${PWD}/backend/data:/data" \
-  ghcr.io/anhnvme/facedetect:latest
+  ghcr.io/binhtph/facedetect:2.0.0
 ```
 
-Versioned images are also published as `1.2.3`, `1.2`, and `1` when a `v1.2.3` Git tag is pushed.
+Pushing the Git tag `v2.0.0` publishes the image as `2.0.0`, `2.0`, `2` and `latest`. Pushes to `main` only update `latest`, `main` and `sha-<commit>`.
 
 ## Third-party software and model licensing
 

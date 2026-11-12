@@ -29,6 +29,9 @@ class InsightFaceConfig:
     provider: str = "CPUExecutionProvider"
     det_size: int = 640
     age_gender_enabled: bool = False
+    # How many faces per image are recognized (largest first). 1 keeps the original
+    # single-face behaviour.
+    max_faces: int = 1
 
     @property
     def configured(self) -> bool:
@@ -255,8 +258,38 @@ def _face_details(
     return details
 
 
-def index_face(config: InsightFaceConfig, image_bytes: bytes, person_id: str) -> dict[str, Any]:
-    image, face = _largest_face(config, image_bytes)
+def _box_iou(a: dict[str, float], b: dict[str, float]) -> float:
+    ax1, ay1 = float(a.get("Left", 0)), float(a.get("Top", 0))
+    ax2, ay2 = ax1 + float(a.get("Width", 0)), ay1 + float(a.get("Height", 0))
+    bx1, by1 = float(b.get("Left", 0)), float(b.get("Top", 0))
+    bx2, by2 = bx1 + float(b.get("Width", 0)), by1 + float(b.get("Height", 0))
+    inter = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def index_face(
+    config: InsightFaceConfig,
+    image_bytes: bytes,
+    person_id: str,
+    bounding_box: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Index one face. With ``bounding_box`` (normalized, relative to this image) the face
+    overlapping it most is used, so training from a multi-face event picks the right
+    person; otherwise the largest face is used."""
+    if bounding_box:
+        image = _decode(image_bytes)
+        try:
+            faces = _engine(config).get(image)
+        except Exception as error:  # noqa: BLE001
+            raise InsightFaceError(f"Face analysis failed: {error}") from error
+        scored = [(_box_iou(_bounding_box(candidate, image), bounding_box), candidate) for candidate in faces]
+        scored = [item for item in scored if item[0] >= 0.3]
+        face = max(scored, key=lambda item: item[0])[1] if scored else None
+        if face is None:
+            raise InsightFaceError("The face of this event was not found in its image.")
+    else:
+        image, face = _largest_face(config, image_bytes)
     if face is None:
         raise InsightFaceError("No usable face was detected in this image.")
     embedding = np.asarray(face.normed_embedding, dtype=np.float32)
@@ -303,6 +336,93 @@ def search_face(
         "inference_id": inference_id,
         "face_detected": True,
     }
+
+
+# Extra (non-largest) faces must be reasonably confident and not tiny, so posters,
+# reflections and far-away background faces do not create noise events.
+EXTRA_FACE_MIN_SCORE = 0.6
+EXTRA_FACE_MIN_PIXELS = 40
+
+
+def _reference_matrix(references: list[dict[str, Any]]) -> tuple[np.ndarray, list[dict[str, Any]]]:
+    vectors: list[np.ndarray] = []
+    valid: list[dict[str, Any]] = []
+    for reference in references:
+        try:
+            vector = np.asarray(json.loads(reference["embedding"]), dtype=np.float32)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if vector.ndim != 1 or vector.size == 0:
+            continue
+        if vectors and vector.shape != vectors[0].shape:
+            continue
+        vectors.append(vector)
+        valid.append(reference)
+    if not vectors:
+        return np.zeros((0, 0), dtype=np.float32), []
+    return np.vstack(vectors), valid
+
+
+def search_faces(
+    config: InsightFaceConfig,
+    image_bytes: bytes,
+    references: list[dict[str, Any]],
+    threshold: float,
+) -> dict[str, Any]:
+    """Detect every face (largest first, up to ``config.max_faces``) and match each one.
+
+    Returns ``{"face_detected": bool, "faces": [...]}`` where each face carries
+    ``matches`` (best first), ``bounding_box``, ``face_details`` and ``inference_id``.
+    """
+    image = _decode(image_bytes)
+    try:
+        detected = _engine(config).get(image)
+    except Exception as error:  # noqa: BLE001
+        raise InsightFaceError(f"Face analysis failed: {error}") from error
+    if not detected:
+        return {"face_detected": False, "faces": []}
+
+    def area(face: Any) -> float:
+        return float((face.bbox[2] - face.bbox[0]) * (face.bbox[3] - face.bbox[1]))
+
+    detected = sorted(detected, key=area, reverse=True)
+    selected = [detected[0]]
+    for face in detected[1:]:
+        if len(selected) >= max(1, int(config.max_faces)):
+            break
+        width = float(face.bbox[2] - face.bbox[0])
+        if float(face.det_score) < EXTRA_FACE_MIN_SCORE or width < EXTRA_FACE_MIN_PIXELS:
+            continue
+        selected.append(face)
+
+    matrix, valid_refs = _reference_matrix(references)
+    faces: list[dict[str, Any]] = []
+    for face in selected:
+        inference_id = uuid.uuid4().hex
+        query = np.asarray(face.normed_embedding, dtype=np.float32)
+        matches: list[dict[str, Any]] = []
+        if valid_refs and matrix.shape[1] == query.shape[0]:
+            similarities = np.clip(matrix @ query, 0.0, None) * 100
+            order = np.argsort(-similarities)
+            for index in order:
+                similarity = float(similarities[index])
+                if similarity < threshold:
+                    break
+                reference = valid_refs[int(index)]
+                matches.append({
+                    "face_id": reference["face_id"],
+                    "person_id": reference["person_id"],
+                    "similarity": round(similarity, 2),
+                })
+                if len(matches) >= 5:
+                    break
+        faces.append({
+            "matches": matches,
+            "bounding_box": _bounding_box(face, image),
+            "face_details": _face_details(config, face, image, inference_id),
+            "inference_id": inference_id,
+        })
+    return {"face_detected": True, "faces": faces}
 
 
 def clear_engine_cache() -> None:

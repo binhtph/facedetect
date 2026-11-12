@@ -1,3 +1,5 @@
+import { clientBasepath } from "@/lib/basepath";
+
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, "");
 
 const defaultApiBase =
@@ -5,7 +7,7 @@ const defaultApiBase =
     ? ""
     : window.location.port === "5173"
       ? `${window.location.protocol}//${window.location.hostname}:8000`
-      : window.location.origin;
+      : `${window.location.origin}${clientBasepath()}`;
 
 export const API_BASE = trimTrailingSlash(import.meta.env.VITE_API_URL || defaultApiBase);
 

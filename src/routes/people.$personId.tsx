@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { appPath } from "@/lib/basepath";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -88,7 +89,7 @@ function PersonDetail() {
     mutationFn: () => api.deletePerson(personId),
     onSuccess: () => {
       toast.success("Person deleted");
-      window.location.href = "/people";
+      window.location.href = appPath("/people");
     },
     onError: (err) => toast.error(err.message),
   });

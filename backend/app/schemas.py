@@ -17,6 +17,7 @@ class InsightFaceSettingsIn(BaseModel):
     ] = "CPUExecutionProvider"
     det_size: int = Field(default=640, ge=320, le=1280)
     age_gender_enabled: bool = False
+    max_faces: int = Field(default=1, ge=1, le=10)
 
 
 class PersonIn(BaseModel):

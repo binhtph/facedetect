@@ -6,7 +6,16 @@ const host = process.env.HOST || "127.0.0.1";
 
 const server = createServer(async (req, res) => {
   try {
-    const url = new URL(req.url || "/", `http://${req.headers.host || `${host}:${port}`}`);
+    // Home Assistant ingress strips /api/hassio_ingress/<token> before proxying and sends it
+    // in X-Ingress-Path. Put it back so the SSR router renders links with the right prefix.
+    const ingressHeader = String(req.headers["x-ingress-path"] || "");
+    const ingressPath = /^\/api\/hassio_ingress\/[A-Za-z0-9_-]+$/.test(ingressHeader)
+      ? ingressHeader
+      : "";
+    const url = new URL(
+      `${ingressPath}${req.url || "/"}`,
+      `http://${req.headers.host || `${host}:${port}`}`,
+    );
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : req;
     const request = new Request(url, {
       method: req.method,
