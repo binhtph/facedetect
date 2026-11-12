@@ -1,0 +1,1 @@
+{"domain": "teststub", "name": "Test stub", "version": "1.0.0", "documentation": "https://example.invalid", "codeowners": [], "dependencies": ["mqtt", "tts", "media_player"], "requirements": [], "iot_class": "local_push", "config_flow": true}

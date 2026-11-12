@@ -31,3 +31,8 @@ node tests/ingress/ingress-sim.mjs ./dist &
 npm i --no-save puppeteer-core
 node tests/ingress/browser-check.mjs        # CHROME_PATH=/path/to/chrome if needed
 ```
+
+## Home Assistant blueprints
+
+See [blueprints/README.md](blueprints/README.md): the front-door blueprint in a real Home
+Assistant against a fake IRIS, 78 checks.

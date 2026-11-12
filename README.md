@@ -137,6 +137,16 @@ IRIS does not watch video continuously. On every **trigger** it fetches **one st
 
    - **HTTP:** `GET` or `POST` to `http://<IRIS-host>:8080/api/cameras/trigger/<slug>` (the full link is shown on the camera page).
 
+## Home Assistant blueprint
+
+[Import the blueprint into Home Assistant](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fbinhtph%2Ffacedetect%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Firis_face_door.yaml) (`blueprints/automation/iris_face_door.yaml`). One automation for the front door with two features you can switch on separately, sharing people, greetings, speaker, LEDs and notifications:
+
+- **Face unlock** (door closed): motion / button / any trigger → LED on → shot → family: unlock, light, a personal spoken greeting; acquaintance: notify, "not allowed" announcement and an **Unlock** button on the phone; stranger, unsure, no face, jammed lock, several faces, IRIS error or offline: notify with the reason.
+- **Greeting when the door opens**: a family member who was just unlocked is not greeted twice; anyone else gets an LED-lit shot, then a spoken greeting and a Telegram message for family, acquaintances and guests (if the shot shows nobody, the recognition from while the door was closed is used).
+- **Capture LEDs** for both moments (unlock shot, door-open shot), which can be different lights, each with its own switch; on just before the shot, off after recognition, never touching a light that was already on.
+
+Notifications go through a script that takes `title`, `message`, `phones`, `ios_data`, `photo`, `telegram`. Greetings and messages accept `{name}` `{confidence}` `{camera}` `{buoi}` (time of day) `{gio}` (time) `{faces}` `{reason}` `{lock}`. With the blueprint, set the door camera **Cooldown** in IRIS low (0–5 s) and turn off Telegram in IRIS to avoid duplicate messages. Tests: `tests/blueprints/`.
+
 ## Important recommendations
 
 - Use it in areas that **also have other physical security layers**; do not make IRIS the only condition for unlocking doors or disarming alarms.

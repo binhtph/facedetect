@@ -1,0 +1,19 @@
+notify_phones:
+  alias: Notify Phones (test stub)
+  mode: parallel
+  max: 20
+  fields:
+    title: {}
+    message: {}
+    phones: {}
+    ios_data: {}
+    photo: {}
+    telegram: {}
+  sequence:
+    - action: mqtt.publish
+      data:
+        topic: test/notify
+        payload: >-
+          {{ {'title': title, 'message': message, 'phones': phones | default([]),
+          'ios_data': ios_data | default({}), 'photo': photo | default(''),
+          'telegram': telegram | default(true)} | tojson }}

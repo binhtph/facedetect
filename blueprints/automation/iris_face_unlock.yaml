@@ -1,0 +1,1238 @@
+blueprint:
+  name: "IRIS – Mở cửa bằng khuôn mặt"
+  author: binhtph
+  source_url: https://github.com/binhtph/facedetect/blob/main/blueprints/automation/iris_face_unlock.yaml
+  domain: automation
+  homeassistant:
+    min_version: "2025.4.0"
+  description: >-
+    Có chuyển động, bấm nút hoặc bất kỳ trigger nào bạn thêm → bấm nút chụp của
+    **IRIS** → chờ đúng kết quả của lần chụp đó (MQTT `iris/event`) → xử lý:
+
+
+    - **Người nhà được phép**: mở khóa, bật đèn, loa đọc lời chào riêng từng người,
+    thông báo.
+
+    - **Người quen chưa được phép**: thông báo (kèm nút "Mở cửa" trên điện thoại),
+    loa báo chưa được phép.
+
+    - **Người lạ**: thông báo kèm ảnh, loa mời chờ (tùy chọn).
+
+    - **Chưa chắc chắn / không thấy mặt**: tự chụp lại, rồi thông báo.
+
+    - **Khóa không mở được, nhiều người cùng lúc, IRIS lỗi, IRIS không trả lời,
+    IRIS mất kết nối**: thông báo rõ lý do.
+
+
+    Thông báo đi qua script **Notify Phones** (Telegram + app điện thoại). Loa dùng
+    `tts.speak`. Lời chào và tin nhắn dùng được các chỗ trống `{name}`
+    `{confidence}` `{camera}` `{buoi}` `{gio}` `{faces}` `{reason}` `{lock}`.
+
+
+    Trong IRIS: đặt **Cooldown** của camera cửa thấp (0–5 giây) vì automation đã
+    tự giãn cách; nếu không IRIS sẽ bỏ qua lần chụp và automation báo "IRIS không
+    trả lời". IRIS không chống ảnh in/màn hình, nên giới hạn điều kiện mở cửa nếu
+    cần.
+  input:
+    start_section:
+      name: "① Khi nào nhận diện"
+      icon: mdi:motion-sensor
+      input:
+        iris_button:
+          name: Nút chụp của IRIS
+          description: >-
+            Nút "Trigger …" IRIS tạo cho camera cửa, ví dụ
+            button.iris_face_recognition_trigger_cua_chinh.
+          selector:
+            entity:
+              filter:
+                - integration: mqtt
+                  domain: button
+        motion_sensors:
+          name: Cảm biến chuyển động / cửa / chuông
+          description: >-
+            Chuyển từ tắt sang bật là bắt đầu nhận diện. Nên chọn cảm biến ngay cửa (chuyển
+            động của camera cửa, chuông cửa) để không chụp vô ích.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+        press_entities:
+          name: Nút bấm vật lý (event, input_button, button)
+          description: Mỗi lần bấm là bắt đầu nhận diện, ví dụ event.aqara_button_1_action.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain:
+                    - event
+                    - input_button
+                    - button
+        press_event_types:
+          name: Kiểu bấm được tính (chỉ cho thực thể event)
+          description: Ví dụ single, double, hold. Để trống = mọi kiểu bấm.
+          default: []
+          selector:
+            text:
+              multiple: true
+        extra_triggers:
+          name: Trigger khác
+          description: >-
+            Thêm trigger bất kỳ: device trigger của nút Zigbee, chuông cửa đổ chuông,
+            giờ cố định…
+          default: []
+          selector:
+            trigger: {}
+        start_conditions:
+          name: Điều kiện để bắt đầu
+          description: Ví dụ chỉ khi khóa đang khóa. Để trống = luôn chạy.
+          default: []
+          selector:
+            condition: {}
+        cooldown:
+          name: Giãn cách giữa 2 lần chụp
+          description: Bỏ qua lần kích hoạt mới nếu nút IRIS vừa được bấm trong khoảng này.
+          default: 20
+          selector:
+            number:
+              min: 0
+              max: 600
+              step: 5
+              unit_of_measurement: s
+              mode: slider
+        retry_on:
+          name: Tự chụp lại khi
+          default:
+            - no_face
+            - review
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Không thấy khuôn mặt
+                  value: no_face
+                - label: Chưa chắc chắn (giống nhưng điểm thấp)
+                  value: review
+                - label: Người lạ
+                  value: unknown
+        retries:
+          name: Số lần chụp lại tối đa
+          default: 1
+          selector:
+            number:
+              min: 0
+              max: 3
+              step: 1
+              mode: slider
+        retry_delay:
+          name: Chờ trước khi chụp lại
+          default: 2
+          selector:
+            number:
+              min: 1
+              max: 15
+              step: 1
+              unit_of_measurement: s
+              mode: slider
+        result_timeout:
+          name: Chờ kết quả IRIS tối đa
+          default: 20
+          selector:
+            number:
+              min: 5
+              max: 60
+              step: 1
+              unit_of_measurement: s
+              mode: slider
+
+    iris_section:
+      name: "② IRIS"
+      icon: mdi:face-recognition
+      collapsed: true
+      input:
+        iris_camera_name:
+          name: Tên camera trong IRIS
+          description: >-
+            Để trống = lấy từ tên nút chụp ("… Trigger Cửa chính" → Cửa chính). Chỉ
+            nhận kết quả của camera này.
+          default: ""
+          selector:
+            text: {}
+        event_topic:
+          name: MQTT topic kết quả
+          description: "<Base topic trong IRIS>/event, mặc định iris/event."
+          default: iris/event
+          selector:
+            text: {}
+        iris_image:
+          name: Ảnh nhận diện mới nhất của IRIS
+          default: image.iris_face_recognition_latest_snapshot
+          selector:
+            entity:
+              filter:
+                - domain: image
+        snapshot_file:
+          name: File lưu ảnh gửi kèm
+          description: Phải nằm trong allowlist_external_dirs. Trong /media thì iPhone hiện được ảnh.
+          default: /media/snapshots/iris_cua.jpg
+          selector:
+            text: {}
+
+    allowed_section:
+      name: "③ Người nhà được phép: mở cửa"
+      icon: mdi:door-open
+      input:
+        allowed_people:
+          name: Danh sách được phép mở cửa
+          description: Tên hoặc biệt danh đúng như trong IRIS (không phân biệt hoa thường).
+          default:
+            - Bình
+            - Táo
+          selector:
+            text:
+              multiple: true
+        door_locks:
+          name: Khóa cần mở
+          default:
+            - lock.aqara_smart_lock_a100
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: lock
+        unlock_min_confidence:
+          name: Độ khớp tối thiểu để mở cửa
+          description: 0 = theo ngưỡng Auto-accept trong IRIS (mặc định 55%).
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+        unlock_with_others:
+          name: Vẫn mở khi ảnh có nhiều khuôn mặt
+          description: Tắt (khuyên dùng) = có từ 2 khuôn mặt trở lên thì chỉ thông báo, không tự mở.
+          default: false
+          selector:
+            boolean: {}
+        unlock_conditions:
+          name: Điều kiện thêm để mở cửa
+          description: Ví dụ chỉ trong khung giờ. Để trống = luôn mở.
+          default: []
+          selector:
+            condition: {}
+        lights:
+          name: Đèn bật khi người nhà về
+          default:
+            - light.midesklamp1s_52cf
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: light
+        light_conditions:
+          name: Điều kiện bật đèn
+          description: Ví dụ chỉ sau hoàng hôn. Để trống = luôn bật.
+          default: []
+          selector:
+            condition: {}
+        greetings:
+          name: Lời chào riêng từng người
+          description: >-
+            Tên: lời chào. Có thể ghi nhiều câu dạng danh sách để chọn ngẫu nhiên. Dùng
+            được {name} {buoi} {gio}.
+          default:
+            Bình:
+              - Chào mừng anh Bình về nhà!
+              - Anh Bình về rồi. Chúc anh {buoi} vui vẻ!
+            Táo: Táo ơi, mừng con về nhà!
+          selector:
+            object: {}
+        greeting_default:
+          name: Lời chào mặc định
+          description: Dùng cho người được phép nhưng chưa có lời chào riêng.
+          default: Chào mừng {name} về nhà!
+          selector:
+            text: {}
+        allowed_actions:
+          name: Hành động thêm khi người nhà về
+          description: Chạy sau cùng. Dùng được biến person, camera, confidence.
+          default: []
+          selector:
+            action: {}
+
+    others_section:
+      name: "④ Người quen, chưa chắc chắn, người lạ"
+      icon: mdi:account-question
+      collapsed: true
+      description: Lời loa đọc cho từng trường hợp. Để trống = không đọc.
+      input:
+        known_tts:
+          name: "Loa: người quen chưa được phép"
+          default: Xin chào {name}. Bạn chưa được phép mở cửa, vui lòng chờ chủ nhà một chút nhé.
+          selector:
+            text: {}
+        review_tts:
+          name: "Loa: chưa chắc chắn"
+          default: Xin lỗi, tôi chưa nhận ra bạn. Vui lòng nhìn thẳng vào camera nhé.
+          selector:
+            text: {}
+        unknown_tts:
+          name: "Loa: người lạ"
+          default: Xin chào, chủ nhà đã nhận được thông báo. Vui lòng chờ trong giây lát.
+          selector:
+            text: {}
+        blocked_tts:
+          name: "Loa: người nhà nhưng không tự mở (nhiều người, ngoài giờ…)"
+          default: Xin chào {name}. Cửa chưa tự mở lúc này, chủ nhà đã nhận được thông báo.
+          selector:
+            text: {}
+        unlock_failed_tts:
+          name: "Loa: khóa không mở được"
+          default: Xin lỗi {name}, khóa cửa chưa mở được. Vui lòng thử lại.
+          selector:
+            text: {}
+        no_face_tts:
+          name: "Loa: không thấy khuôn mặt"
+          default: ""
+          selector:
+            text: {}
+        known_actions:
+          name: Hành động thêm khi gặp người quen
+          default: []
+          selector:
+            action: {}
+        review_actions:
+          name: Hành động thêm khi chưa chắc chắn
+          default: []
+          selector:
+            action: {}
+        unknown_actions:
+          name: Hành động thêm khi có người lạ
+          description: Ví dụ bật đèn hiên màu đỏ.
+          default: []
+          selector:
+            action: {}
+
+    remote_section:
+      name: "⑤ Mở cửa từ điện thoại"
+      icon: mdi:cellphone-key
+      collapsed: true
+      description: >-
+        Thông báo trên app Home Assistant có nút "🔓 Mở cửa" (iPhone hỏi Face ID trước
+        khi mở). Bấm nút là mở khóa và loa mời vào.
+      input:
+        remote_unlock_for:
+          name: Hiện nút Mở cửa khi
+          default:
+            - known
+            - review
+            - blocked
+            - unknown
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Người quen chưa được phép
+                  value: known
+                - label: Chưa chắc chắn
+                  value: review
+                - label: Người nhà nhưng không tự mở
+                  value: blocked
+                - label: Người lạ
+                  value: unknown
+        remote_unlock_action:
+          name: Mã nút
+          description: Để trống = tự tạo riêng cho automation này.
+          default: ""
+          selector:
+            text: {}
+        remote_unlock_minutes:
+          name: Nút hết hạn sau
+          description: Bấm nút trên thông báo cũ hơn khoảng này thì không mở. 0 = không hết hạn.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        remote_unlock_tts:
+          name: "Loa: khi mở từ điện thoại"
+          default: Mời {name} vào nhà.
+          selector:
+            text: {}
+
+    speaker_section:
+      name: "⑥ Loa"
+      icon: mdi:speaker
+      input:
+        tts_enabled:
+          name: Đọc lời chào và thông báo qua loa
+          default: true
+          selector:
+            boolean: {}
+        speaker:
+          name: Loa
+          default: media_player.living_room_speaker
+          selector:
+            entity:
+              filter:
+                - domain: media_player
+        tts_entity:
+          name: Giọng đọc (TTS)
+          default: tts.google_translate_en_com
+          selector:
+            entity:
+              filter:
+                - domain: tts
+        tts_language:
+          name: Ngôn ngữ đọc
+          description: vi = tiếng Việt. Để trống = theo cài đặt của TTS.
+          default: vi
+          selector:
+            text: {}
+        tts_volume:
+          name: Âm lượng khi đọc
+          description: >-
+            0 = giữ nguyên. Nếu loa đang phát nhạc thì đọc xong trả lại âm lượng cũ (loa đang
+            tắt thì Home Assistant không biết âm lượng cũ nên giữ mức này).
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        tts_conditions:
+          name: Điều kiện để loa đọc
+          description: Ví dụ chế độ an ninh là Có nhà / Tắt. Để trống = luôn đọc.
+          default: []
+          selector:
+            condition: {}
+
+    notify_section:
+      name: "⑦ Thông báo"
+      icon: mdi:bell-ring
+      input:
+        notify_script:
+          name: Script gửi thông báo
+          description: Script có các trường title, message, phones, ios_data, photo, telegram.
+          default: script.notify_phones
+          selector:
+            entity:
+              filter:
+                - domain: script
+        phones:
+          name: Điện thoại nhận qua app
+          description: Để trống = chỉ gửi Telegram.
+          default:
+            - brians_iphone
+          selector:
+            select:
+              multiple: true
+              custom_value: true
+              options:
+                - brians_iphone
+                - thoais_iphone
+                - taos_ipad
+        use_telegram:
+          name: Gửi Telegram
+          default: true
+          selector:
+            boolean: {}
+        send_photo:
+          name: Gửi kèm ảnh IRIS
+          default: true
+          selector:
+            boolean: {}
+        title_name:
+          name: Tên trong tiêu đề
+          description: "Tiêu đề dạng ICON TÊN › NHÁNH, ví dụ 🚨 AN NINH › NGƯỜI LẠ Ở CỬA."
+          default: AN NINH
+          selector:
+            text: {}
+        notify_cases:
+          name: Gửi thông báo khi
+          default:
+            - allowed
+            - blocked
+            - unlock_failed
+            - known
+            - review
+            - unknown
+            - error
+            - offline
+            - remote
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Người nhà về, đã mở cửa
+                  value: allowed
+                - label: Người nhà nhưng không tự mở
+                  value: blocked
+                - label: Khóa không mở được
+                  value: unlock_failed
+                - label: Người quen chưa được phép
+                  value: known
+                - label: Chưa chắc chắn
+                  value: review
+                - label: Người lạ
+                  value: unknown
+                - label: Không thấy khuôn mặt
+                  value: no_face
+                - label: IRIS lỗi / không trả lời
+                  value: error
+                - label: IRIS mất kết nối / kết nối lại
+                  value: offline
+                - label: Mở cửa từ điện thoại
+                  value: remote
+        offline_minutes:
+          name: Báo IRIS mất kết nối sau
+          default: 3
+          selector:
+            number:
+              min: 1
+              max: 60
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+
+    message_section:
+      name: "⑧ Nội dung tin nhắn"
+      icon: mdi:message-text
+      collapsed: true
+      description: >-
+        Chỗ trống: {name} tên, {confidence} độ khớp %, {camera}, {buoi} (buổi
+        sáng/trưa/chiều/tối), {gio} giờ:phút, {faces} số khuôn mặt, {reason} lý do,
+        {lock} trạng thái khóa.
+      input:
+        msg_allowed:
+          name: Người nhà về
+          default: "{name} đã về, cửa đã mở (khớp {confidence}%)."
+          selector:
+            text: {}
+        msg_blocked:
+          name: Người nhà nhưng không tự mở
+          default: "{name} ở cửa (khớp {confidence}%) nhưng không tự mở: {reason}."
+          selector:
+            text: {}
+        msg_unlock_failed:
+          name: Khóa không mở được
+          default: "Nhận ra {name} nhưng không mở được khóa ({lock})."
+          selector:
+            text: {}
+        msg_known:
+          name: Người quen chưa được phép
+          default: "{name} đang ở cửa (khớp {confidence}%), chưa có trong danh sách được mở cửa."
+          selector:
+            text: {}
+        msg_review:
+          name: Chưa chắc chắn
+          default: "Có thể là {name} ở cửa nhưng chỉ khớp {confidence}%, chưa đủ chắc để mở cửa."
+          selector:
+            text: {}
+        msg_unknown:
+          name: Người lạ
+          default: "Có người lạ ở cửa ({camera})."
+          selector:
+            text: {}
+        msg_no_face:
+          name: Không thấy khuôn mặt
+          default: "Đã chụp {camera} nhưng không thấy khuôn mặt nào."
+          selector:
+            text: {}
+        msg_error:
+          name: IRIS lỗi / không trả lời
+          default: "IRIS không nhận diện được: {reason}. Kiểm tra camera trong IRIS và go2rtc."
+          selector:
+            text: {}
+        msg_remote:
+          name: Mở cửa từ điện thoại
+          default: "Đã mở cửa cho {name} từ điện thoại."
+          selector:
+            text: {}
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input motion_sensors
+    from: "off"
+    to: "on"
+    id: start
+  - trigger: state
+    entity_id: !input press_entities
+    not_from:
+      - unavailable
+      - unknown
+    not_to:
+      - unavailable
+      - unknown
+    id: start
+  - triggers: !input extra_triggers
+  - trigger: event
+    event_type: mobile_app_notification_action
+    id: remote_unlock
+  - trigger: state
+    entity_id: !input iris_button
+    to: unavailable
+    for:
+      minutes: !input offline_minutes
+    id: iris_offline
+  - trigger: state
+    entity_id: !input iris_button
+    from: unavailable
+    id: iris_online
+
+variables:
+  iris_button: !input iris_button
+  iris_camera_name: !input iris_camera_name
+  press_event_types: !input press_event_types
+  cooldown: !input cooldown
+  retry_on: !input retry_on
+  retries: !input retries
+  retry_delay: !input retry_delay
+  result_timeout: !input result_timeout
+  iris_image: !input iris_image
+  snapshot_file: !input snapshot_file
+  allowed_people: !input allowed_people
+  door_locks: !input door_locks
+  unlock_min_confidence: !input unlock_min_confidence
+  unlock_with_others: !input unlock_with_others
+  lights: !input lights
+  greetings: !input greetings
+  greeting_default: !input greeting_default
+  tts_texts:
+    known: !input known_tts
+    review: !input review_tts
+    unknown: !input unknown_tts
+    blocked: !input blocked_tts
+    unlock_failed: !input unlock_failed_tts
+    no_face: !input no_face_tts
+    remote: !input remote_unlock_tts
+  remote_unlock_for: !input remote_unlock_for
+  remote_unlock_action: !input remote_unlock_action
+  unlock_action_id: >-
+    {{ remote_unlock_action | string | trim
+    or 'IRIS_UNLOCK_' ~ (this.entity_id | default('automation.iris') | replace('automation.', '') | upper) }}
+  remote_unlock_minutes: !input remote_unlock_minutes
+  tts_enabled: !input tts_enabled
+  speaker: !input speaker
+  tts_entity: !input tts_entity
+  tts_language: !input tts_language
+  tts_volume: !input tts_volume
+  phones: !input phones
+  use_telegram: !input use_telegram
+  send_photo: !input send_photo
+  title_name: !input title_name
+  notify_cases: !input notify_cases
+  offline_minutes: !input offline_minutes
+  messages:
+    allowed: !input msg_allowed
+    blocked: !input msg_blocked
+    unlock_failed: !input msg_unlock_failed
+    known: !input msg_known
+    review: !input msg_review
+    unknown: !input msg_unknown
+    no_face: !input msg_no_face
+    error: !input msg_error
+    timeout: !input msg_error
+    remote: !input msg_remote
+  titles:
+    allowed: 🏠|NGƯỜI NHÀ VỀ
+    blocked: 🚪|NGƯỜI NHÀ (CHƯA MỞ CỬA)
+    unlock_failed: ⚠️|MỞ KHÓA THẤT BẠI
+    known: 👋|NGƯỜI QUEN
+    review: 🤔|CHƯA CHẮC CHẮN
+    unknown: 🚨|NGƯỜI LẠ Ở CỬA
+    no_face: 📷|KHÔNG THẤY MẶT
+    error: ⚠️|IRIS LỖI
+    timeout: ⚠️|IRIS KHÔNG TRẢ LỜI
+    remote: 🔓|MỞ CỬA TỪ XA
+  lock_words:
+    locked: đang khóa
+    unlocked: đã mở
+    open: đang mở
+    opening: đang mở
+    unlocking: đang mở khóa
+    locking: đang khóa lại
+    jammed: bị kẹt
+    unavailable: mất kết nối
+    unknown: không rõ trạng thái
+  buoi: >-
+    {% set h = now().hour %}{{ 'buổi sáng' if h < 11 else 'buổi trưa' if h < 13 else 'buổi chiều' if h < 18 else 'buổi tối' }}
+  gio: "{{ now().strftime('%H:%M') }}"
+  # Camera whose results count: the input, or the name after "Trigger " in the IRIS button name.
+  camera_lc: >-
+    {% set n = iris_camera_name | string | trim %}
+    {%- if n == '' %}{% set fn = state_attr(iris_button, 'friendly_name') | string %}
+    {%- set n = fn.split('Trigger ')[-1] if 'Trigger ' in fn else '' %}{% endif %}
+    {{- n | trim | lower }}
+  # Filled in while the run goes on.
+  attempt: 0
+  timed_out: false
+  ev: {}
+  kind: ""
+  case: ""
+  block_reason: ""
+  person: ""
+
+conditions:
+  # Checked when the trigger fires (not when a queued run starts): no new shot while
+  # a run is still busy or right after the last shot.
+  - alias: Đúng nút Mở cửa của automation này / không chụp chồng
+    condition: template
+    value_template: >-
+      {% if trigger.id == 'remote_unlock' %}{{ trigger.event.data.action | default('') == unlock_action_id }}
+      {%- elif trigger.id in ['iris_offline', 'iris_online'] %}true
+      {%- else %}{{ (this.attributes.current | default(0) | int(0)) == 0
+      and as_timestamp(now()) - as_timestamp(states(iris_button), 0) >= cooldown | float(0) }}
+      {%- endif %}
+
+actions:
+  - choose:
+      # ───────────── Chủ nhà bấm "Mở cửa" trên thông báo ─────────────
+      - alias: Mở cửa từ điện thoại
+        conditions:
+          - condition: trigger
+            id: remote_unlock
+        sequence:
+          - variables:
+              ad: >-
+                {{ trigger.event.data.action_data if trigger.event.data.action_data is defined
+                and trigger.event.data.action_data is mapping else {} }}
+              person: "{{ (ad.get('person') or 'khách') | string }}"
+              sent_ts: "{{ ad.get('ts', 0) | float(0) }}"
+              expired: >-
+                {{ remote_unlock_minutes | int(0) > 0 and sent_ts > 0 and
+                as_timestamp(now()) - sent_ts > remote_unlock_minutes | int(0) * 60 }}
+          - if:
+              - condition: template
+                value_template: "{{ expired }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ 'remote' in notify_cases }}"
+                then:
+                  - action: !input notify_script
+                    continue_on_error: true
+                    data:
+                      title: "⏰ {{ title_name }} › NÚT MỞ CỬA ĐÃ HẾT HẠN"
+                      message: >-
+                        Không mở cửa: thông báo về {{ person }} đã quá {{ remote_unlock_minutes | int }}
+                        phút. Mở bằng app khóa nếu vẫn cần.
+                      phones: "{{ phones }}"
+                      telegram: "{{ use_telegram }}"
+              - stop: Nút mở cửa đã hết hạn
+          - variables:
+              locks_to_open: >-
+                {{ door_locks | reject('is_state', ['unlocked', 'open', 'opening', 'unlocking']) | list }}
+          - if:
+              - condition: template
+                value_template: "{{ locks_to_open | count > 0 }}"
+            then:
+              - action: lock.unlock
+                target:
+                  entity_id: "{{ locks_to_open }}"
+                continue_on_error: true
+              # wait_template (not wait_for_trigger): the lock may already report
+              # unlocked by the time the service call returns.
+              - wait_template: >-
+                  {{ door_locks | select('is_state', ['unlocked', 'open']) | list | count == door_locks | count }}
+                timeout:
+                  seconds: 15
+                continue_on_timeout: true
+          - variables:
+              opened: >-
+                {{ door_locks | count > 0 and door_locks | select('is_state', ['unlocked', 'open']) | list | count == door_locks | count }}
+              case: "{{ 'remote' if opened else 'unlock_failed' }}"
+          - variables:
+              lock_txt: >-
+                {% set ns = namespace(out=[]) %}
+                {%- for l in door_locks %}{% set ns.out = ns.out + [lock_words.get(states(l), states(l))] %}{% endfor %}
+                {{- ns.out | join(', ') }}
+              fill:
+                name: "{{ person }}"
+                confidence: ""
+                camera: ""
+                buoi: "{{ buoi }}"
+                gio: "{{ gio }}"
+                faces: ""
+                reason: ""
+                lock: "{{ lock_txt }}"
+              tts_text: >-
+                {% set ns = namespace(t=tts_texts.get(case, '') | string) %}
+                {%- for k, v in fill.items() %}{% set ns.t = ns.t | replace('{' ~ k ~ '}', v | string) %}{% endfor %}
+                {{- ns.t | trim }}
+              message: >-
+                {% set ns = namespace(t=messages.get(case, '') | string) %}
+                {%- for k, v in fill.items() %}{% set ns.t = ns.t | replace('{' ~ k ~ '}', v | string) %}{% endfor %}
+                {{- ns.t | trim }}
+          - parallel:
+              - alias: Loa
+                if:
+                  - condition: template
+                    value_template: "{{ tts_enabled and tts_text != '' }}"
+                  - condition: and
+                    conditions: !input tts_conditions
+                then:
+                  - variables:
+                      prev_volume: "{{ state_attr(speaker, 'volume_level') }}"
+                      set_volume: "{{ tts_volume | int(0) > 0 }}"
+                  - if:
+                      - condition: template
+                        value_template: "{{ set_volume }}"
+                    then:
+                      - action: media_player.volume_set
+                        target:
+                          entity_id: "{{ speaker }}"
+                        data:
+                          volume_level: "{{ (tts_volume | int(0)) / 100 }}"
+                        continue_on_error: true
+                  - action: tts.speak
+                    target:
+                      entity_id: "{{ tts_entity }}"
+                    data: >-
+                      {% set d = {'media_player_entity_id': speaker, 'message': tts_text, 'cache': true} %}
+                      {%- if tts_language | string | trim != '' %}{% set d = dict(d, language=tts_language | string | trim) %}{% endif %}
+                      {{- d }}
+                    continue_on_error: true
+                  - if:
+                      - condition: template
+                        value_template: "{{ set_volume and prev_volume is number }}"
+                    then:
+                      - if:
+                          - condition: template
+                            value_template: "{{ not is_state(speaker, 'playing') }}"
+                        then:
+                          - wait_for_trigger:
+                              - trigger: state
+                                entity_id: !input speaker
+                                to: playing
+                            timeout:
+                              seconds: 8
+                            continue_on_timeout: true
+                      - if:
+                          - condition: template
+                            value_template: "{{ is_state(speaker, 'playing') }}"
+                        then:
+                          - wait_for_trigger:
+                              - trigger: state
+                                entity_id: !input speaker
+                                from: playing
+                            timeout:
+                              seconds: 60
+                            continue_on_timeout: true
+                      - action: media_player.volume_set
+                        target:
+                          entity_id: "{{ speaker }}"
+                        data:
+                          volume_level: "{{ prev_volume }}"
+                        continue_on_error: true
+              - alias: Thông báo
+                if:
+                  - condition: template
+                    value_template: "{{ (case == 'remote' and 'remote' in notify_cases) or (case == 'unlock_failed' and 'unlock_failed' in notify_cases) }}"
+                then:
+                  - action: !input notify_script
+                    continue_on_error: true
+                    data:
+                      title: >-
+                        {% set icon, label = titles[case].split('|') %}{{ icon }} {{ title_name }} › {{ label }}
+                      message: "{{ message }}"
+                      phones: "{{ phones }}"
+                      ios_data: "{{ {'push': {'interruption-level': 'time-sensitive'}} if case == 'unlock_failed' else {} }}"
+                      telegram: "{{ use_telegram }}"
+
+      # ───────────── IRIS mất kết nối / kết nối lại ─────────────
+      - alias: IRIS mất kết nối
+        conditions:
+          - condition: trigger
+            id: iris_offline
+          - condition: template
+            value_template: "{{ 'offline' in notify_cases }}"
+        sequence:
+          - action: !input notify_script
+            continue_on_error: true
+            data:
+              title: "🔌 {{ title_name }} › IRIS MẤT KẾT NỐI"
+              message: >-
+                IRIS mất kết nối hơn {{ offline_minutes | int }} phút, tạm thời không nhận
+                diện và không tự mở cửa. Kiểm tra app IRIS và MQTT.
+              phones: "{{ phones }}"
+              ios_data:
+                push:
+                  interruption-level: time-sensitive
+              telegram: "{{ use_telegram }}"
+      - alias: IRIS kết nối lại
+        conditions:
+          - condition: trigger
+            id: iris_online
+          - condition: template
+            value_template: >-
+              {{ 'offline' in notify_cases and as_timestamp(trigger.to_state.last_changed) -
+              as_timestamp(trigger.from_state.last_changed) >= offline_minutes * 60 }}
+        sequence:
+          - action: !input notify_script
+            continue_on_error: true
+            data:
+              title: "✅ {{ title_name }} › IRIS ĐÃ KẾT NỐI LẠI"
+              message: >-
+                IRIS hoạt động lại sau {{ ((as_timestamp(trigger.to_state.last_changed) -
+                as_timestamp(trigger.from_state.last_changed)) / 60) | round(0) | int }} phút mất kết nối.
+              phones: "{{ phones }}"
+              telegram: "{{ use_telegram }}"
+      - alias: Bỏ qua các trigger IRIS khác
+        conditions:
+          - condition: trigger
+            id:
+              - iris_offline
+              - iris_online
+        sequence: []
+
+    # ───────────── Còn lại: chụp, nhận diện, xử lý ─────────────
+    default:
+      - alias: Lọc kiểu bấm, bỏ qua chính nút IRIS
+        condition: template
+        value_template: >-
+          {% set eid = trigger.entity_id | default('') %}
+          {{ eid != iris_button and (not (eid is string and eid.startswith('event.'))
+          or press_event_types | count == 0
+          or (trigger.to_state.attributes.event_type | default('')) in press_event_types) }}
+      - alias: Điều kiện để bắt đầu
+        condition: and
+        conditions: !input start_conditions
+      - alias: IRIS đang kết nối
+        condition: template
+        value_template: "{{ states(iris_button) != 'unavailable' }}"
+
+      - alias: Chụp và chờ kết quả (chụp lại nếu cần)
+        repeat:
+          sequence:
+            - if:
+                - condition: template
+                  value_template: "{{ attempt > 0 }}"
+              then:
+                - delay:
+                    seconds: "{{ retry_delay | int(2) }}"
+            - variables:
+                attempt: "{{ attempt + 1 }}"
+            - action: button.press
+              target:
+                entity_id: "{{ iris_button }}"
+            - if:
+                - condition: template
+                  value_template: "{{ camera_lc != '' }}"
+              then:
+                - wait_for_trigger:
+                    - trigger: mqtt
+                      topic: !input event_topic
+                      payload: "{{ camera_lc }}"
+                      value_template: "{{ value_json.latest_camera | default('') | string | trim | lower }}"
+                  timeout:
+                    seconds: "{{ result_timeout | int(20) }}"
+                  continue_on_timeout: true
+                - variables:
+                    timed_out: "{{ wait.trigger is none }}"
+                    ev: >-
+                      {{ wait.trigger.payload_json if wait.trigger and wait.trigger.payload_json is defined
+                      and wait.trigger.payload_json is mapping else {} }}
+              else:
+                - wait_for_trigger:
+                    - trigger: mqtt
+                      topic: !input event_topic
+                  timeout:
+                    seconds: "{{ result_timeout | int(20) }}"
+                  continue_on_timeout: true
+                - variables:
+                    timed_out: "{{ wait.trigger is none }}"
+                    ev: >-
+                      {{ wait.trigger.payload_json if wait.trigger and wait.trigger.payload_json is defined
+                      and wait.trigger.payload_json is mapping else {} }}
+            - variables:
+                kind: >-
+                  {% set t = ev.get('latest_type', '') | string | lower %}
+                  {%- set names = [ev.get('latest_person', ''), ev.get('latest_person_alias', ''), ev.get('latest_person_name', '')]
+                     | map('string') | map('trim') | map('lower') | reject('eq', '') | list %}
+                  {%- set allowed = allowed_people | map('string') | map('trim') | map('lower') | reject('eq', '') | list %}
+                  {%- set conf = ev.get('latest_confidence', 0) | float(0) %}
+                  {%- if timed_out %}timeout
+                  {%- elif t == 'known' and names | select('in', allowed) | list | count > 0
+                      and unlock_min_confidence | float(0) > 0 and conf < unlock_min_confidence | float(0) %}review
+                  {%- elif t in ['no_face', 'review', 'unknown'] %}{{ t }}
+                  {%- else %}final{% endif %}
+          until:
+            - condition: template
+              value_template: "{{ timed_out or kind not in retry_on or attempt > retries | int(0) }}"
+
+      - alias: Đọc kết quả
+        variables:
+          etype: "{{ ev.get('latest_type', '') | string | lower }}"
+          camera: "{{ ev.get('latest_camera', '') | string | trim or (iris_camera_name or 'camera cửa') }}"
+          person: "{{ ev.get('latest_person', '') | string | trim }}"
+          confidence: "{{ ev.get('latest_confidence', 0) | float(0) }}"
+          conf_txt: "{{ confidence | round(0) | int }}"
+          faces: "{{ ev.get('faces_in_image', 1) | int(1) }}"
+          names_lc: >-
+            {{ [ev.get('latest_person', ''), ev.get('latest_person_alias', ''), ev.get('latest_person_name', '')]
+            | map('string') | map('trim') | map('lower') | reject('eq', '') | list }}
+          is_allowed: >-
+            {{ names_lc | select('in', allowed_people | map('string') | map('trim') | map('lower') | list) | list | count > 0 }}
+          is_test: "{{ camera in ['Test upload', 'Manual upload'] }}"
+          case: >-
+            {% if timed_out %}timeout
+            {%- elif etype == 'known' %}{{ 'allowed' if is_allowed else 'known' }}
+            {%- elif etype in ['review', 'unknown', 'no_face', 'error'] %}{{ etype }}
+            {%- else %}error{% endif %}
+          block_reason: ""
+
+      - alias: Người nhà được phép → mở khóa
+        if:
+          - condition: template
+            value_template: "{{ case == 'allowed' }}"
+        then:
+          - variables:
+              block_reason: >-
+                {% if is_test %}test
+                {%- elif door_locks | count == 0 %}no_lock
+                {%- elif unlock_min_confidence | float(0) > 0 and confidence < unlock_min_confidence | float(0) %}confidence
+                {%- elif faces > 1 and not unlock_with_others %}multi_face
+                {%- endif %}
+          - if:
+              - condition: template
+                value_template: "{{ block_reason == '' }}"
+              - condition: and
+                conditions: !input unlock_conditions
+            then:
+              - variables:
+                  locks_to_open: >-
+                    {{ door_locks | reject('is_state', ['unlocked', 'open', 'opening', 'unlocking']) | list }}
+              - if:
+                  - condition: template
+                    value_template: "{{ locks_to_open | count > 0 }}"
+                then:
+                  - action: lock.unlock
+                    target:
+                      entity_id: "{{ locks_to_open }}"
+                    continue_on_error: true
+                  # wait_template (not wait_for_trigger): the lock may already report
+                  # unlocked by the time the service call returns.
+                  - wait_template: >-
+                      {{ door_locks | select('is_state', ['unlocked', 'open']) | list | count == door_locks | count }}
+                    timeout:
+                      seconds: 15
+                    continue_on_timeout: true
+              - variables:
+                  case: >-
+                    {{ 'allowed' if door_locks | select('is_state', ['unlocked', 'open']) | list | count
+                    == door_locks | count else 'unlock_failed' }}
+            else:
+              - variables:
+                  block_reason: "{{ block_reason or 'conditions' }}"
+                  case: "{{ 'review' if block_reason == 'confidence' else 'blocked' }}"
+
+      - alias: Bật đèn
+        if:
+          - condition: template
+            value_template: "{{ case == 'allowed' and lights | count > 0 }}"
+          - condition: and
+            conditions: !input light_conditions
+        then:
+          - action: light.turn_on
+            target:
+              entity_id: "{{ lights }}"
+            continue_on_error: true
+
+      - alias: Soạn lời chào và tin nhắn
+        variables:
+          lock_txt: >-
+            {% set ns = namespace(out=[]) %}
+            {%- for l in door_locks %}{% set ns.out = ns.out + [lock_words.get(states(l), states(l))] %}{% endfor %}
+            {{- ns.out | join(', ') or 'chưa chọn khóa' }}
+          reason_txt: >-
+            {% if case == 'timeout' %}IRIS không trả kết quả sau {{ result_timeout | int }} giây (camera đang cooldown trong IRIS, camera offline hoặc IRIS bận)
+            {%- elif case == 'error' %}{{ person or 'kết quả không đọc được' }}
+            {%- elif block_reason == 'test' %}đây là ảnh thử
+            {%- elif block_reason == 'no_lock' %}chưa chọn khóa
+            {%- elif block_reason == 'confidence' %}độ khớp dưới ngưỡng {{ unlock_min_confidence | int }}%
+            {%- elif block_reason == 'multi_face' %}ảnh có {{ faces }} khuôn mặt
+            {%- elif block_reason == 'conditions' %}chưa đủ điều kiện mở cửa
+            {%- endif %}
+          greeting: >-
+            {% set ns = namespace(g=none) %}
+            {%- if greetings is mapping %}{% for k, v in greetings.items() %}
+            {%- if ns.g is none and (k | string | trim | lower) in names_lc %}{% set ns.g = v %}{% endif %}
+            {%- endfor %}{% endif %}
+            {%- if ns.g is string and ns.g | trim != '' %}{{ ns.g }}
+            {%- elif ns.g is iterable and ns.g is not string and ns.g is not mapping and ns.g | count > 0 %}{{ ns.g | random }}
+            {%- else %}{{ greeting_default }}{% endif %}
+          fill:
+            name: "{{ person if case not in ['unknown', 'no_face', 'error', 'timeout'] else 'người lạ' }}"
+            confidence: "{{ conf_txt }}"
+            camera: "{{ camera }}"
+            buoi: "{{ buoi }}"
+            gio: "{{ gio }}"
+            faces: "{{ faces }}"
+            reason: "{{ reason_txt }}"
+            lock: "{{ lock_txt }}"
+          tts_text: >-
+            {% set ns = namespace(t=(greeting if case == 'allowed' else tts_texts.get(case, '')) | string) %}
+            {%- for k, v in fill.items() %}{% set ns.t = ns.t | replace('{' ~ k ~ '}', v | string) %}{% endfor %}
+            {{- ns.t | trim }}
+          message: >-
+            {% set ns = namespace(t=messages.get(case, '') | string) %}
+            {%- for k, v in fill.items() %}{% set ns.t = ns.t | replace('{' ~ k ~ '}', v | string) %}{% endfor %}
+            {{- ns.t | trim }}
+            {%- if faces > 1 and block_reason != 'multi_face' and case in ['allowed', 'blocked', 'unlock_failed', 'known', 'review', 'unknown'] %} Ảnh có {{ faces }} khuôn mặt.{% endif %}
+          notify_key: "{{ 'error' if case == 'timeout' else case }}"
+          title: >-
+            {% set icon, label = titles.get(case, '⚠️|IRIS').split('|') %}{{ icon }} {{ title_name }} › {{ label }}
+          want_photo: >-
+            {{ send_photo and case in ['allowed', 'blocked', 'unlock_failed', 'known', 'review', 'unknown', 'no_face'] }}
+          event_ts: "{{ as_timestamp(ev.get('latest_time', ''), 0) }}"
+          remote_ok: "{{ case in remote_unlock_for and door_locks | count > 0 }}"
+
+      - parallel:
+          - alias: Loa
+            if:
+              - condition: template
+                value_template: "{{ tts_enabled and tts_text != '' }}"
+              - condition: and
+                conditions: !input tts_conditions
+            then:
+              - variables:
+                  prev_volume: "{{ state_attr(speaker, 'volume_level') }}"
+                  set_volume: "{{ tts_volume | int(0) > 0 }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ set_volume }}"
+                then:
+                  - action: media_player.volume_set
+                    target:
+                      entity_id: "{{ speaker }}"
+                    data:
+                      volume_level: "{{ (tts_volume | int(0)) / 100 }}"
+                    continue_on_error: true
+              - action: tts.speak
+                target:
+                  entity_id: "{{ tts_entity }}"
+                data: >-
+                  {% set d = {'media_player_entity_id': speaker, 'message': tts_text, 'cache': true} %}
+                  {%- if tts_language | string | trim != '' %}{% set d = dict(d, language=tts_language | string | trim) %}{% endif %}
+                  {{- d }}
+                continue_on_error: true
+              - if:
+                  - condition: template
+                    value_template: "{{ set_volume and prev_volume is number }}"
+                then:
+                  - if:
+                      - condition: template
+                        value_template: "{{ not is_state(speaker, 'playing') }}"
+                    then:
+                      - wait_for_trigger:
+                          - trigger: state
+                            entity_id: !input speaker
+                            to: playing
+                        timeout:
+                          seconds: 8
+                        continue_on_timeout: true
+                  - if:
+                      - condition: template
+                        value_template: "{{ is_state(speaker, 'playing') }}"
+                    then:
+                      - wait_for_trigger:
+                          - trigger: state
+                            entity_id: !input speaker
+                            from: playing
+                        timeout:
+                          seconds: 60
+                        continue_on_timeout: true
+                  - action: media_player.volume_set
+                    target:
+                      entity_id: "{{ speaker }}"
+                    data:
+                      volume_level: "{{ prev_volume }}"
+                    continue_on_error: true
+
+          - alias: Thông báo
+            if:
+              - condition: template
+                value_template: "{{ notify_key in notify_cases }}"
+            then:
+              - alias: Chờ IRIS gửi ảnh của lần nhận diện này
+                if:
+                  - condition: template
+                    value_template: >-
+                      {{ want_photo and event_ts > 0 and as_timestamp(states(iris_image), 0) < event_ts - 1 }}
+                then:
+                  - wait_for_trigger:
+                      - trigger: state
+                        entity_id: !input iris_image
+                        not_to:
+                          - unavailable
+                          - unknown
+                    timeout:
+                      seconds: 8
+                    continue_on_timeout: true
+              - variables:
+                  photo: >-
+                    {{ snapshot_file if want_photo and event_ts > 0
+                    and as_timestamp(states(iris_image), 0) >= event_ts - 1 else '' }}
+              - if:
+                  - condition: template
+                    value_template: "{{ photo != '' }}"
+                then:
+                  - action: image.snapshot
+                    target:
+                      entity_id: "{{ iris_image }}"
+                    data:
+                      filename: "{{ photo }}"
+                    continue_on_error: true
+              - variables:
+                  ios_data: >-
+                    {% set d = {} %}
+                    {%- if photo.startswith('/media/') %}{% set d = dict(d, image='/media/local/' ~ photo[7:]) %}{% endif %}
+                    {%- if case in ['unknown', 'blocked', 'unlock_failed', 'error', 'timeout'] %}{% set d = dict(d, push={'interruption-level': 'time-sensitive'}) %}{% endif %}
+                    {%- if remote_ok %}{% set d = dict(d,
+                        actions=[{'action': unlock_action_id, 'title': '🔓 Mở cửa', 'authenticationRequired': true}],
+                        action_data={'person': person if case != 'unknown' else 'khách', 'ts': as_timestamp(now()) | int}) %}{% endif %}
+                    {{- d }}
+              - action: !input notify_script
+                continue_on_error: true
+                data:
+                  title: "{{ title }}"
+                  message: "{{ message }}"
+                  phones: "{{ phones }}"
+                  photo: "{{ photo }}"
+                  ios_data: "{{ ios_data }}"
+                  telegram: "{{ use_telegram }}"
+
+      - alias: Hành động thêm theo từng trường hợp
+        choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ case == 'allowed' }}"
+            sequence: !input allowed_actions
+          - conditions:
+              - condition: template
+                value_template: "{{ case == 'known' }}"
+            sequence: !input known_actions
+          - conditions:
+              - condition: template
+                value_template: "{{ case == 'review' }}"
+            sequence: !input review_actions
+          - conditions:
+              - condition: template
+                value_template: "{{ case == 'unknown' }}"
+            sequence: !input unknown_actions

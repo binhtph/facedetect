@@ -1,0 +1,20 @@
+homeassistant:
+  name: IRIS blueprint test
+  latitude: 10.77
+  longitude: 106.70
+  elevation: 5
+  unit_system: metric
+  time_zone: Asia/Ho_Chi_Minh
+  country: VN
+  allowlist_external_dirs:
+    - /media
+  media_dirs:
+    local: /media
+logger:
+  default: warning
+  logs:
+    homeassistant.components.automation: info
+    homeassistant.components.script: info
+    homeassistant.components.blueprint: info
+automation: !include automations.yaml
+script: !include scripts.yaml

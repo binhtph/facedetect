@@ -1,0 +1,48 @@
+- id: iris_door_test
+  alias: IRIS door test
+  use_blueprint:
+    path: binhtph/iris_face_door.yaml
+    input:
+      iris_button: button.iris_face_recognition_trigger_cong
+      door_sensor: binary_sensor.living_room_door_contact
+      motion_sensors:
+        - binary_sensor.motion_sensor_occupancy
+      press_entities:
+        - event.test_button
+      press_event_types:
+        - single
+      cooldown: 5
+      retries: 1
+      retry_delay: 1
+      result_timeout: 6
+      family_people:
+        - Bình
+        - táo
+      tts_entity: tts.stub
+      tts_volume: 40
+      offline_minutes: 1
+      greet_cooldown: 5
+      led_unlock_lights:
+        - light.door_led
+      led_greet_lights:
+        - light.door_led_inside
+      led_warmup: 0.5
+      led_hold: 1
+- id: iris_door_defaults
+  alias: IRIS door defaults only
+  use_blueprint:
+    path: binhtph/iris_face_door.yaml
+    input:
+      iris_button: button.iris_face_recognition_trigger_khong_co
+      door_sensor: binary_sensor.khong_co
+      event_topic: unused/event
+- id: fire_notification_action
+  alias: Test helper - fire mobile_app_notification_action
+  triggers:
+    - trigger: mqtt
+      topic: test/fire_action
+  actions:
+    - event: mobile_app_notification_action
+      event_data:
+        action: "{{ trigger.payload_json.action }}"
+        action_data: "{{ trigger.payload_json.action_data }}"
