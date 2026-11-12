@@ -224,6 +224,11 @@ def init_db() -> None:
             conn.execute("ALTER TABLE events ADD COLUMN inference_id TEXT NOT NULL DEFAULT ''")
         if "processing_ms" not in event_columns:
             conn.execute("ALTER TABLE events ADD COLUMN processing_ms REAL NOT NULL DEFAULT 0")
+        if "notified" not in event_columns:
+            # 0 = recognition that was not sent to MQTT/Telegram (e.g. Test page uploads).
+            # Such events must not show up later when IRIS republishes its state.
+            conn.execute("ALTER TABLE events ADD COLUMN notified INTEGER NOT NULL DEFAULT 1")
+            conn.execute("UPDATE events SET notified = 0 WHERE camera_name = 'Test upload'")
 
         face_columns = {row["name"] for row in conn.execute("PRAGMA table_info(person_faces)").fetchall()}
         if "embedding" not in face_columns:

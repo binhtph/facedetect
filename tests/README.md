@@ -14,6 +14,8 @@ IRIS_DATA_DIR=$(mktemp -d) python -I tests/backend/test_mqtt_bridge.py .
 # Multi-face recognition, training from extra faces, analytics. Needs buffalo_s.zip from
 # https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_s.zip
 python -I tests/backend/test_multiface.py . /path/to/buffalo_s.zip
+# Test-page uploads with/without "Send to Home Assistant" vs. MQTT state and republish.
+python -I tests/backend/test_notify.py . /path/to/buffalo_s.zip
 ```
 
 ## Home Assistant ingress (UI)

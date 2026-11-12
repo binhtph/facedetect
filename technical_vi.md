@@ -37,6 +37,7 @@ Model mặc định là `buffalo_s` và được tự tải khi khởi động. 
 - Một client thường trực `<device_id>_iris` cho cả publish lẫn nhận lệnh (`MqttBridge` trong `mqtt_homeassistant.py`).
 - Last Will: `<base>/availability` = `offline` (retained). Khi kết nối: `online`, subscribe `<base>/camera/+/trigger/set` và `<discovery_prefix>/status`, rồi publish lại discovery, state và ảnh mới nhất.
 - `homeassistant/status` = `online` (HA khởi động lại) cũng kích hoạt publish lại discovery.
+- Chỉ event có `notified = 1` mới được dùng cho state retained và ảnh mới nhất; ảnh upload ở trang Test khi tắt _Send to Home Assistant_ được lưu với `notified = 0`.
 - Event và state dùng QoS 1 (paho giữ tối đa 500 tin khi mất kết nối); ảnh `latest_image` dùng QoS 0.
 - Debug: `GET /api/mqtt/status`, `GET|DELETE /api/mqtt/messages`, trang **MQTT Monitor**.
 

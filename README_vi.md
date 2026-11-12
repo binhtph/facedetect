@@ -6,7 +6,7 @@ IRIS nhận diện khuôn mặt cục bộ bằng InsightFace. Ảnh, embedding,
 
 ## Phiên bản và kho mã
 
-Phiên bản hiện tại: **2.0.0** (image `ghcr.io/binhtph/facedetect:2.0.0`). Xem [CHANGELOG.md](CHANGELOG.md).
+Phiên bản hiện tại: **2.0.1** (image `ghcr.io/binhtph/facedetect:2.0.1`). Xem [CHANGELOG.md](CHANGELOG.md).
 
 | Cách chạy             | Kho mã                                                                          |
 | --------------------- | ------------------------------------------------------------------------------- |
@@ -83,6 +83,7 @@ Cấu hình MQTT và model tùy theo máy và cách dùng:
 - **Model:** chọn theo phần [Ghi chú model và tốc độ](#ghi-chú-model-và-tốc-độ) ở trên. Máy yếu bắt đầu với `buffalo_s`.
 - **MQTT:** điền broker trong **Settings → MQTT**. IRIS giữ một kết nối thường trực, tự kết nối lại và tự gửi lại Home Assistant discovery sau khi IRIS, broker hoặc Home Assistant khởi động lại. Trang **MQTT Monitor** hiển thị trạng thái kết nối và các tin đã gửi/nhận.
 - **Nhiều người trong một khung hình:** chỉnh **Settings → Faces per image** (mặc định 1 = chỉ mặt lớn nhất).
+- **Trang Test:** ảnh upload mặc định **không** gửi MQTT/Telegram để không kích hoạt automation. Bật **Send to Home Assistant & Telegram** khi muốn thử cả chuỗi (sensor, `iris/event`, Telegram).
 
 Mỗi lần nhận diện, IRIS gửi một tin lên `iris/event` (mỗi khuôn mặt một tin) và cập nhật các sensor như `Latest Person`, `Latest Recognition Event`. Khi IRIS mất kết nối, thiết bị trong Home Assistant chuyển sang _Unavailable_.
 
@@ -168,10 +169,10 @@ Chạy local mặc định dùng `backend/data/`. Có thể đổi data root b�
 docker run -d --name iris \
   -p 8080:80 \
   -v "${PWD}/backend/data:/data" \
-  ghcr.io/binhtph/facedetect:2.0.0
+  ghcr.io/binhtph/facedetect:2.0.1
 ```
 
-Khi push Git tag `v2.0.0`, image được phát hành với các tag `2.0.0`, `2.0`, `2` và `latest`. Push lên `main` chỉ cập nhật `latest`, `main` và `sha-<commit>`.
+Khi push Git tag `v2.0.1`, image được phát hành với các tag `2.0.1`, `2.0`, `2` và `latest`. Push lên `main` chỉ cập nhật `latest`, `main` và `sha-<commit>`.
 
 ## Phần mềm bên thứ ba và giấy phép model
 

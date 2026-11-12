@@ -158,7 +158,7 @@ def current_mqtt_state() -> dict:
                 SELECT e.*, p.alias AS current_alias, p.name AS current_name
                 FROM events e
                 LEFT JOIN people p ON p.id = e.person_id
-                WHERE e.type IN ('known', 'review', 'unknown', 'no_face')
+                WHERE e.type IN ('known', 'review', 'unknown', 'no_face') AND e.notified = 1
                 ORDER BY e.created_at DESC
                 LIMIT 1
                 """
@@ -250,7 +250,7 @@ def latest_mqtt_image_payload() -> bytes | None:
                        p.alias AS current_alias, p.name AS current_name
                 FROM events e
                 LEFT JOIN people p ON p.id = e.person_id
-                WHERE e.image_path != '' OR e.thumb_path != '' OR e.face_crop_path != ''
+                WHERE (e.image_path != '' OR e.thumb_path != '' OR e.face_crop_path != '') AND e.notified = 1
                 ORDER BY e.created_at DESC
                 LIMIT 1
                 """
@@ -1850,7 +1850,17 @@ def recognize(
     notify: Annotated[bool, Form()] = True,
 ) -> dict:
     rel_path, image = save_upload(file, "events")
-    return recognize_image_bytes(image, rel_path, camera_id, camera_name, notify=notify)
+    result = recognize_image_bytes(image, rel_path, camera_id, camera_name, notify=notify)
+    if not notify:
+        # Keep silent recognitions (Test page) out of the MQTT state that IRIS republishes
+        # on reconnect / Home Assistant restart, so they never reach automations.
+        event_ids = [result.get("id"), *[extra.get("id") for extra in result.get("additional_events") or []]]
+        event_ids = [event_id for event_id in event_ids if event_id]
+        if event_ids:
+            with connect() as conn:
+                conn.executemany("UPDATE events SET notified = 0 WHERE id = ?", [(event_id,) for event_id in event_ids])
+        result["notified"] = 0
+    return result
 
 
 @app.get("/api/unknowns")

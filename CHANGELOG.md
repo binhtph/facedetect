@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1 - 2026-11-12
+
+- **Test page:** new switch _Send to Home Assistant & Telegram_ (off by default, remembered per browser). Test uploads were always silent, which looked like MQTT not updating until settings were saved or the add-on restarted.
+- Silent recognitions (Test page with the switch off) are flagged `notified = 0` and never appear in the MQTT state or latest image that IRIS republishes on reconnect or Home Assistant restart, so a test photo can no longer reach automations. Existing `Test upload` events are flagged on upgrade.
+
 ## 2.0.0 - 2026-11-12
 
 - **Home Assistant sidebar (ingress):** the UI, API calls, uploads and router now work under `/api/hassio_ingress/<token>/` as well as on the direct port. SSR links get the ingress prefix from `X-Ingress-Path`; nginx rewrites asset URLs in HTML; chunk preloads follow the page's base path.

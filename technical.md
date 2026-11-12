@@ -37,6 +37,7 @@ Changing model packs rebuilds reference embeddings, preferring the face crop `pe
 - One persistent client `<device_id>_iris` for both publishing and commands (`MqttBridge` in `mqtt_homeassistant.py`).
 - Last Will: `<base>/availability` = `offline` (retained). On connect: `online`, subscribe to `<base>/camera/+/trigger/set` and `<discovery_prefix>/status`, then republish discovery, state and the latest image.
 - `homeassistant/status` = `online` (Home Assistant restart) also republishes discovery.
+- Only events with `notified = 1` feed the retained state and latest image; Test-page uploads without _Send to Home Assistant_ are stored with `notified = 0`.
 - Events and state use QoS 1 (paho keeps up to 500 messages while disconnected); `latest_image` uses QoS 0.
 - Debugging: `GET /api/mqtt/status`, `GET|DELETE /api/mqtt/messages`, and the **MQTT Monitor** page.
 

@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Upload,
@@ -17,6 +17,7 @@ import {
 
 import { PageHeader, PageShell } from "@/components/page-shell";
 import { Card } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FaceDetailsPanel, parseFaceDetails } from "@/components/face-details-panel";
@@ -63,10 +64,28 @@ function TestPage() {
   const [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<EventItem | null>(null);
   const [otherFaces, setOtherFaces] = useState<EventItem[]>([]);
+  // Test uploads stay silent by default so they never trigger automations; switch on to
+  // check the whole chain (MQTT sensors, iris/event, Telegram) with a photo.
+  const [sendToHome, setSendToHome] = useState(false);
+  useEffect(() => {
+    try {
+      setSendToHome(window.localStorage.getItem("iris.test.notify") === "1");
+    } catch {
+      // storage unavailable: keep the default (off)
+    }
+  }, []);
+  const toggleSendToHome = (value: boolean) => {
+    setSendToHome(value);
+    try {
+      window.localStorage.setItem("iris.test.notify", value ? "1" : "0");
+    } catch {
+      // storage unavailable (private mode / sandboxed iframe): keep the in-memory value
+    }
+  };
   const [dragOver, setDragOver] = useState(false);
 
   const recognize = useMutation({
-    mutationFn: (file: File) => api.recognize(file, "Test upload", "", false),
+    mutationFn: (file: File) => api.recognize(file, "Test upload", "", sendToHome),
     onSuccess: (event) => {
       setResult(event);
       setOtherFaces(event.additional_events ?? []);
@@ -157,6 +176,19 @@ function TestPage() {
         eyebrow="// Sandbox"
         title="Test Recognition"
         description="Upload an image to test recognition against the local InsightFace gallery."
+        actions={
+          <label className="flex cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-2 text-sm">
+            <Switch checked={sendToHome} onCheckedChange={toggleSendToHome} />
+            <span>
+              Send to Home Assistant &amp; Telegram
+              <span className="block text-xs text-muted-foreground">
+                {sendToHome
+                  ? "Results update MQTT sensors and can trigger automations"
+                  : "Off: test results stay inside IRIS"}
+              </span>
+            </span>
+          </label>
+        }
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

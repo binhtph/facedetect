@@ -6,7 +6,7 @@ IRIS performs local face recognition with InsightFace. Images, embeddings, setti
 
 ## Versions and repositories
 
-Current version: **2.0.0** (image `ghcr.io/binhtph/facedetect:2.0.0`). See [CHANGELOG.md](CHANGELOG.md).
+Current version: **2.0.1** (image `ghcr.io/binhtph/facedetect:2.0.1`). See [CHANGELOG.md](CHANGELOG.md).
 
 | How to run            | Repository                                                                     |
 | --------------------- | ------------------------------------------------------------------------------ |
@@ -83,6 +83,7 @@ Configure MQTT and the model to suit your machine and use case:
 - **Model:** pick one using [Model and speed notes](#model-and-speed-notes) above. Start with `buffalo_s` on modest hardware.
 - **MQTT:** enter your broker in **Settings → MQTT**. IRIS keeps one persistent connection, reconnects by itself and republishes Home Assistant discovery after IRIS, the broker or Home Assistant restarts. The **MQTT Monitor** page shows the connection state and the messages sent/received.
 - **Several people in one frame:** set **Settings → Faces per image** (default 1 = largest face only).
+- **Test page:** uploads are **not** sent to MQTT/Telegram by default so they cannot trigger automations. Turn on **Send to Home Assistant & Telegram** to test the whole chain (sensors, `iris/event`, Telegram).
 
 Every recognition publishes a message on `iris/event` (one per face) and updates sensors such as `Latest Person` and `Latest Recognition Event`. When IRIS loses its connection, the device shows as _Unavailable_ in Home Assistant.
 
@@ -168,10 +169,10 @@ Local development defaults to `backend/data/`. Override the root with `IRIS_DATA
 docker run -d --name iris \
   -p 8080:80 \
   -v "${PWD}/backend/data:/data" \
-  ghcr.io/binhtph/facedetect:2.0.0
+  ghcr.io/binhtph/facedetect:2.0.1
 ```
 
-Pushing the Git tag `v2.0.0` publishes the image as `2.0.0`, `2.0`, `2` and `latest`. Pushes to `main` only update `latest`, `main` and `sha-<commit>`.
+Pushing the Git tag `v2.0.1` publishes the image as `2.0.1`, `2.0`, `2` and `latest`. Pushes to `main` only update `latest`, `main` and `sha-<commit>`.
 
 ## Third-party software and model licensing
 
