@@ -17,4 +17,8 @@ logger:
     homeassistant.components.script: info
     homeassistant.components.blueprint: info
 automation: !include automations.yaml
+input_text:
+  iris_greeted:
+    name: IRIS đã chào
+    max: 255
 script: !include scripts.yaml

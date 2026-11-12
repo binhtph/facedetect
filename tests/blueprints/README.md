@@ -9,7 +9,8 @@ expiry), retry after "review" / no face, jammed lock, stranger, IRIS not answeri
 faces, results from another camera, idle test uploads, the two capture LEDs (on before the
 shot, off after, a light already on left alone), IRIS offline/online, and the door-open
 greeting (no second greeting after a face unlock, quick re-open, acquaintance let in from the
-phone, guests, someone leaving, a fresh shot beating an older stranger result).
+phone, guests, someone leaving, a fresh shot beating an older stranger result, motion while the door is already open with
+no second greeting for the same person).
 
 ```bash
 pip install homeassistant amqtt paho-mqtt pillow   # Python 3.14 for HA 2026.11

@@ -169,6 +169,11 @@ def motion() -> None:
     client.publish("test/motion", "OFF", qos=1, retain=True)
 
 
+def door_motion() -> None:
+    pulse("test/motion2")
+    client.publish("test/motion2", "OFF", qos=1, retain=True)
+
+
 def door_open() -> None:
     pulse("test/door")
 
@@ -203,6 +208,10 @@ def setup() -> None:
             "name": "motion_sensor_occupancy", "unique_id": "t_motion", "state_topic": "test/motion",
             "default_entity_id": "binary_sensor.motion_sensor_occupancy",
         },
+        "homeassistant/binary_sensor/test/motion2/config": {
+            "name": "door_motion", "unique_id": "t_motion2", "state_topic": "test/motion2",
+            "default_entity_id": "binary_sensor.door_motion",
+        },
         "homeassistant/binary_sensor/test/door/config": {
             "name": "Living Room Door", "unique_id": "t_door", "state_topic": "test/door", "device_class": "door",
             "default_entity_id": "binary_sensor.living_room_door_contact",
@@ -231,6 +240,7 @@ def setup() -> None:
     for topic, body in test_entities.items():
         client.publish(topic, json.dumps(body), qos=1, retain=True)
     client.publish("test/motion", "OFF", qos=1, retain=True)
+    client.publish("test/motion2", "OFF", qos=1, retain=True)
     client.publish("test/door", "OFF", qos=1, retain=True)
     client.publish("test/lock/state", "LOCKED", qos=1, retain=True)
     client.publish("test/led/state", "OFF", qos=1, retain=True)
@@ -517,7 +527,7 @@ def greeting_scenarios() -> None:
     door_open()
     wait_until(lambda: len(notes(t0)) >= 1 and len(says(t0)) >= 1, 12)
     check("G5 guest greeting + group", [x["message"] for x in says(t0)] == ["Xin chào quý khách, chào mừng đến chơi nhà! Chào mừng mọi người!"], str(says(t0)))
-    check("G5 guest message", [(x["title"], x["message"]) for x in notes(t0)] == [("🙋 CỬA CHÍNH › KHÁCH LẠ", "Có khách lạ vừa vào nhà. Ảnh có 2 khuôn mặt.")], str(notes(t0)))
+    check("G5 guest message", [(x["title"], x["message"]) for x in notes(t0)] == [("🙋 CỬA CHÍNH › KHÁCH LẠ", "Có khách lạ đến nhà. Ảnh có 2 khuôn mặt.")], str(notes(t0)))
     door_close()
     time.sleep(6)
 
@@ -547,6 +557,65 @@ def greeting_scenarios() -> None:
     check("G7 fresh shot wins over the old stranger result", len(presses(t1)) == 1
           and [x["message"] for x in says(t1)] == ["Táo ơi, mừng con về nhà!"]
           and [x["title"] for x in notes(t1)] == ["🏡 CỬA CHÍNH › NGƯỜI NHÀ VỀ"], str(says(t1)) + str(notes(t1)))
+    door_close()
+    time.sleep(6)
+
+
+def motion_greet_scenarios() -> None:
+    # M1 door closed: motion at the door is for the unlock app, not a greeting
+    t0 = time.time()
+    door_motion()
+    time.sleep(3)
+    check("M1 door closed: door motion starts no greeting shot", presses(t0) == [] and says(t0) == [], str(presses(t0)))
+
+    # M2 door opens -> Táo greeted; door stays open; motion later -> Táo again -> no second greeting
+    t0 = time.time()
+    responses.append([ev("known", "Táo", 71)])
+    door_open()
+    wait_until(lambda: len(says(t0)) >= 1, 12)
+    check("M2 greeted on opening", [x["message"] for x in says(t0)] == ["Táo ơi, mừng con về nhà!"], str(says(t0)))
+    time.sleep(11)
+    t1 = time.time()
+    responses.append([ev("known", "Táo", 69)])
+    door_motion()
+    check("M2 door open + motion -> new shot", wait_until(lambda: len(presses(t1)) == 1, 5), str(presses(t1)))
+    time.sleep(4)
+    check("M2 same person within 10 min -> not greeted again", says(t1) == [] and notes(t1) == [], str(says(t1)) + str(notes(t1)))
+    check("M2 door-open LED used for the shot", wait_until(lambda: led(t1, "led2") == [b"ON", b"OFF"], 6), str(led(t1, "led2")))
+
+    # M3 motion again right away -> inside the 10 s shot cooldown -> nothing
+    t1 = time.time()
+    door_motion()
+    time.sleep(2)
+    check("M3 motion inside cooldown ignored", presses(t1) == [], str(presses(t1)))
+    time.sleep(9)
+
+    # M4 door still open, someone new at the door -> greeted
+    t1 = time.time()
+    responses.append([ev("known", "Hùng", 64)])
+    door_motion()
+    wait_until(lambda: len(says(t1)) >= 1 and len(notes(t1)) >= 1, 12)
+    check("M4 new person greeted", [x["message"] for x in says(t1)] == ["Xin chào Hùng, rất vui được gặp bạn!"], str(says(t1)))
+    check("M4 Telegram", [(x["title"], x["message"]) for x in notes(t1)] == [("👋 CỬA CHÍNH › KHÁCH QUEN", "Hùng vừa đến chơi nhà.")], str(notes(t1)))
+    time.sleep(11)
+
+    # M5 people walking out (no face twice) -> silent
+    t1 = time.time()
+    responses.append([ev("no_face", "No face detected", 0, faces=None)])
+    responses.append([ev("no_face", "No face detected", 0, faces=None)])
+    door_motion()
+    check("M5 retried once", wait_until(lambda: len(presses(t1)) == 2, 8), str(presses(t1)))
+    time.sleep(3)
+    check("M5 silent", says(t1) == [] and notes(t1) == [], str(says(t1)) + str(notes(t1)))
+    time.sleep(9)
+
+    # M6 Hùng again after that no-face shot -> the memory helper still knows he was greeted
+    t1 = time.time()
+    responses.append([ev("known", "Hùng", 66)])
+    door_motion()
+    check("M6 new shot", wait_until(lambda: len(presses(t1)) == 1, 5), str(presses(t1)))
+    time.sleep(4)
+    check("M6 Hùng not greeted twice (memory)", says(t1) == [] and notes(t1) == [], str(says(t1)) + str(notes(t1)))
     door_close()
     time.sleep(6)
 
@@ -582,6 +651,7 @@ def run() -> None:
         unlock_scenarios()
     if only in ("all", "greet"):
         greeting_scenarios()
+        motion_greet_scenarios()
     if only in ("all", "offline"):
         offline_scenarios()
     client.loop_stop()

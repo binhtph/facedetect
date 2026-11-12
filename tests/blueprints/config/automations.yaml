@@ -22,6 +22,10 @@
       tts_volume: 40
       offline_minutes: 1
       greet_cooldown: 5
+      greet_motion_sensors:
+        - binary_sensor.door_motion
+      greet_motion_cooldown: 10
+      greet_memory: input_text.iris_greeted
       led_unlock_lights:
         - light.door_led
       led_greet_lights:

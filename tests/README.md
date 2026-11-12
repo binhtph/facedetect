@@ -35,4 +35,4 @@ node tests/ingress/browser-check.mjs        # CHROME_PATH=/path/to/chrome if nee
 ## Home Assistant blueprints
 
 See [blueprints/README.md](blueprints/README.md): the front-door blueprint in a real Home
-Assistant against a fake IRIS, 78 checks.
+Assistant against a fake IRIS, 90 checks.

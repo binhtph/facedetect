@@ -20,7 +20,8 @@ blueprint:
     **Ứng dụng 2 – Chào khi cửa mở**: dùng luôn kết quả nhận diện lúc cửa còn đóng
     (ví dụ khách vừa được chủ nhà mở cửa), không có thì bật LED và chụp → loa chào
     và tin Telegram cho người nhà, người quen, khách. Người nhà vừa được chào và mở
-    khóa ở ứng dụng 1 thì không chào lại.
+    khóa ở ứng dụng 1 thì không chào lại. Tùy chọn: cửa đang mở sẵn mà có chuyển động
+    ở cửa thì cũng chụp và chào (không chào lại cùng một người trong 10 phút).
 
 
     Lời chào và tin nhắn dùng được `{name}` `{confidence}` `{camera}` `{buoi}`
@@ -425,6 +426,50 @@ blueprint:
           default: false
           selector:
             boolean: {}
+        greet_motion_sensors:
+          name: Chào khi cửa đang mở và có chuyển động ở cửa
+          description: >-
+            Cảm biến chuyển động ở cửa (ví dụ chuyển động của camera cửa). Cửa đang mở mà
+            cảm biến chuyển sang bật thì bật LED, chụp và chào. Để trống = chỉ chào lúc cửa
+            vừa mở.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+        greet_motion_cooldown:
+          name: "Chuyển động khi cửa mở: không chụp lại trong"
+          description: Tính từ lần bấm nút chụp IRIS gần nhất.
+          default: 60
+          selector:
+            number:
+              min: 10
+              max: 900
+              step: 10
+              unit_of_measurement: s
+              mode: slider
+        greet_repeat_minutes:
+          name: "Chuyển động khi cửa mở: không chào lại cùng một người trong"
+          description: Người lạ được tính là cùng một người. 0 = luôn chào.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        greet_memory:
+          name: "Chuyển động khi cửa mở: ô nhớ người đã chào (tùy chọn)"
+          description: >-
+            Một input_text (độ dài tối đa 255) để nhớ ai vừa được chào, kể cả khi giữa chừng
+            camera không thấy mặt. Để trống = chỉ so với lần nhận diện ngay trước.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: input_text
 
     led_section:
       name: "⑦ Đèn LED hỗ trợ chụp"
@@ -743,12 +788,12 @@ blueprint:
             text: {}
         msg_greet_review:
           name: "Ứng dụng 2: chưa chắc là ai"
-          default: "Có thể là {name} vừa vào nhà (khớp {confidence}%)."
+          default: "Có thể là {name} đến nhà (khớp {confidence}%)."
           selector:
             text: {}
         msg_greet_unknown:
           name: "Ứng dụng 2: khách lạ"
-          default: "Có khách lạ vừa vào nhà."
+          default: "Có khách lạ đến nhà."
           selector:
             text: {}
         msg_greet_no_face:
@@ -815,6 +860,11 @@ triggers:
     from: "off"
     to: "on"
     id: door_open
+  - trigger: state
+    entity_id: !input greet_motion_sensors
+    from: "off"
+    to: "on"
+    id: greet_motion
   - trigger: event
     event_type: mobile_app_notification_action
     id: remote_unlock
@@ -857,6 +907,9 @@ variables:
   greet_cooldown: !input greet_cooldown
   reuse_seconds: !input reuse_seconds
   greet_family_again: !input greet_family_again
+  greet_motion_cooldown: !input greet_motion_cooldown
+  greet_repeat_minutes: !input greet_repeat_minutes
+  greet_memory: !input greet_memory
   led_unlock_enabled: !input led_unlock_enabled
   led_unlock_lights: !input led_unlock_lights
   led_greet_enabled: !input led_greet_enabled
@@ -955,6 +1008,10 @@ variables:
   # Filled in while the run goes on.
   recent: {}
   recent_ok: false
+  previous: {}
+  greet_by_motion: false
+  repeat_same: false
+  person_key: ""
   flow: ""
   need_scan: false
   retry_kinds: []
@@ -994,6 +1051,9 @@ conditions:
       {%- elif trigger.id in ['iris_offline', 'iris_online'] %}true
       {%- elif trigger.id == 'door_open' %}{{ greet_enabled
         and as_timestamp(now()) - as_timestamp(trigger.from_state.last_changed, 0) >= greet_cooldown | float(0) }}
+      {%- elif trigger.id == 'greet_motion' %}{{ greet_enabled and is_state(door_sensor, 'on')
+        and (this.attributes.current | default(0) | int(0)) == 0
+        and as_timestamp(now()) - as_timestamp(states(iris_button), 0) >= greet_motion_cooldown | float(0) }}
       {%- else %}{{ unlock_enabled
         and (this.attributes.current | default(0) | int(0)) == 0
         and as_timestamp(now()) - as_timestamp(states(iris_button), 0) >= cooldown | float(0)
@@ -1160,6 +1220,30 @@ actions:
                         - no_face
                       scan_leds: "{{ led_greet_lights if led_greet_enabled else [] }}"
 
+      # ───────────── Ứng dụng 2: cửa đang mở, có chuyển động ở cửa ─────────────
+      - alias: Cửa đang mở, có chuyển động – ai ở cửa?
+        conditions:
+          - condition: trigger
+            id: greet_motion
+        sequence:
+          - alias: Điều kiện để chào
+            condition: and
+            conditions: !input greet_conditions
+          - alias: IRIS đang kết nối
+            condition: template
+            value_template: "{{ states(iris_button) != 'unavailable' }}"
+          - variables:
+              flow: greet
+              source: scan
+              greet_by_motion: true
+              previous: >-
+                {% set s = expand(latest_event_sensor) if latest_event_sensor else [] %}
+                {{ dict(s[0].attributes) if s | count > 0 else {} }}
+              need_scan: true
+              retry_kinds:
+                - no_face
+              scan_leds: "{{ led_greet_lights if led_greet_enabled else [] }}"
+
     # ───────────── Ứng dụng 1: bắt đầu nhận diện để mở cửa ─────────────
     default:
       - alias: Lọc kiểu bấm, bỏ qua chính nút IRIS
@@ -1299,6 +1383,29 @@ actions:
           is_family: >-
             {{ names_lc | select('in', family_people | map('string') | map('trim') | map('lower') | list) | list | count > 0 }}
           is_test: "{{ camera in ['Test upload', 'Manual upload'] }}"
+          person_key: >-
+            {{ '?' if etype == 'unknown' else (names_lc[0] if etype in ['known', 'review'] and names_lc | count > 0 else '') }}
+      - variables:
+          # Door already open, motion: same person (or a stranger again) greeted within the
+          # repeat window -> no second greeting. With the memory helper this survives
+          # no-face shots in between; without it, compare with the previous result only.
+          repeat_same: >-
+            {% set window = greet_repeat_minutes | int(0) * 60 %}
+            {%- if not greet_by_motion or window == 0 or person_key == '' %}{{ false }}
+            {%- elif greet_memory %}
+              {%- set ns = namespace(hit=false) %}
+              {%- for part in (states(greet_memory) | string).split(';') %}{% set kv = part.split('=') %}
+              {%- if kv | count == 2 and kv[0] == person_key and as_timestamp(now()) - kv[1] | float(0) <= window %}{% set ns.hit = true %}{% endif %}
+              {%- endfor %}{{ ns.hit }}
+            {%- else %}
+              {%- set pt = previous.get('latest_type', '') | string | lower %}
+              {%- set pn = [previous.get('latest_person', ''), previous.get('latest_person_alias', ''), previous.get('latest_person_name', '')]
+                 | map('string') | map('trim') | map('lower') | reject('eq', '') | list %}
+              {%- set same = (pt == 'unknown' and etype == 'unknown')
+                 or (pt in ['known', 'review'] and etype in ['known', 'review'] and names_lc | select('in', pn) | list | count > 0) %}
+              {{- same and (camera_lc == '' or (previous.get('latest_camera', '') | string | trim | lower) == camera_lc)
+              and as_timestamp(now()) - as_timestamp(previous.get('latest_time', ''), 0) <= window }}
+            {%- endif %}
           personal: >-
             {% set ns = namespace(g=none) %}
             {%- if greetings is mapping %}{% for k, v in greetings.items() %}
@@ -1372,7 +1479,8 @@ actions:
   - alias: Bước 5 – soạn lời chào và tin nhắn
     variables:
       app: "{{ 'greet' if flow == 'greet' else 'unlock' }}"
-      quiet: "{{ flow == 'greet' and source == 'recent' and case == 'family' and not greet_family_again }}"
+      quiet: >-
+        {{ (flow == 'greet' and source == 'recent' and case == 'family' and not greet_family_again) or repeat_same }}
       lock_txt: >-
         {% set ns = namespace(out=[]) %}
         {%- for l in door_locks %}{% set ns.out = ns.out + [lock_words.get(states(l), states(l))] %}{% endfor %}
@@ -1554,6 +1662,30 @@ actions:
             target:
               entity_id: "{{ led_on }}"
             continue_on_error: true
+
+  - alias: Ghi nhớ người vừa được chào
+    if:
+      - condition: template
+        value_template: >-
+          {{ greet_memory != '' and person_key != '' and not quiet
+          and ((flow == 'greet' and case in ['family', 'known', 'review', 'unknown'])
+               or (flow == 'unlock' and case == 'allowed')) }}
+    then:
+      - action: input_text.set_value
+        target:
+          entity_id: "{{ greet_memory }}"
+        data:
+          value: >-
+            {% set window = greet_repeat_minutes | int(0) * 60 %}
+            {%- set now_ts = as_timestamp(now()) | int %}
+            {%- set ns = namespace(out=[person_key ~ '=' ~ now_ts], s='') %}
+            {%- for part in (states(greet_memory) | string).split(';') %}{% set kv = part.split('=') %}
+            {%- if kv | count == 2 and kv[0] != person_key and now_ts - kv[1] | int(0) <= window %}{% set ns.out = ns.out + [part] %}{% endif %}
+            {%- endfor %}
+            {%- for p in ns.out %}{% set c = (ns.s ~ ';' ~ p) if ns.s else p %}
+            {%- if c | length <= state_attr(greet_memory, 'max') | int(100) %}{% set ns.s = c %}{% endif %}{% endfor %}
+            {{- ns.s }}
+        continue_on_error: true
 
   - alias: Bước 7 – hành động thêm (ứng dụng 1)
     choose:
